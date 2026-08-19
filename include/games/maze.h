@@ -129,3 +129,6 @@ inline std::array<char, Maze::WIDTH * Maze::HEIGHT> Maze::shared_grid_{};
 inline bool Maze::grid_initialized_ = false;
 
 } // namespace games
+
+#include "ga/game_registry.h"
+REGISTER_GAME(Maze, 12, 12, 200)

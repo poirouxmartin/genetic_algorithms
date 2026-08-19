@@ -6,7 +6,6 @@
 #include "crossover.h"
 #include "mutation.h"
 #include <thread>
-#include <atomic>
 #include <functional>
 #include <chrono>
 #include <vector>
@@ -46,11 +45,13 @@ class GAEngine {
     std::unique_ptr<CrossoverStrategy> crossover_;
     std::unique_ptr<MutationStrategy> mutation_;
     std::mt19937 rng_;
-    std::atomic<bool> stop_flag_{false};
+    bool stop_flag_ = false;
+    std::chrono::high_resolution_clock::time_point start_time_;
 
 public:
     explicit GAEngine(const GAConfig& cfg = GAConfig{})
-        : config_(cfg), rng_(std::random_device{}()) {
+        : config_(cfg), rng_(std::random_device{}()),
+          start_time_(std::chrono::high_resolution_clock::now()) {
 
         pop_ = Population(cfg.population_size, cfg.gene_count, cfg.min_gene, cfg.max_gene);
         selection_ = std::make_unique<TournamentSelection>(cfg.tournament_size);
@@ -63,6 +64,11 @@ public:
         }
     }
 
+    GAEngine(GAEngine&&) = default;
+    GAEngine& operator=(GAEngine&&) = default;
+    GAEngine(const GAEngine&) = delete;
+    GAEngine& operator=(const GAEngine&) = delete;
+
     void set_selection(std::unique_ptr<SelectionStrategy> s) { selection_ = std::move(s); }
     void set_crossover(std::unique_ptr<CrossoverStrategy> c) { crossover_ = std::move(c); }
     void set_mutation(std::unique_ptr<MutationStrategy> m) { mutation_ = std::move(m); }
@@ -72,6 +78,55 @@ public:
     const GAConfig& config() const { return config_; }
 
     void request_stop() { stop_flag_ = true; }
+
+    void create_next_generation_mutable() { create_next_generation(); }
+
+    // Non-blocking single generation step. Returns true if a generation was run.
+    bool step(std::function<void(Genome&)> fitness_fn, GAResult& result) {
+        if (result.generations_run >= config_.max_generations) return false;
+
+        auto gen = result.generations_run;
+        pop_.evaluate_batch(fitness_fn);
+
+        float best_fit = -1e30f;
+        float sum = 0.0f;
+        for (size_t i = 0; i < pop_.individuals_.size(); ++i) {
+            float f = pop_.individuals_[i].fitness;
+            sum += f;
+            if (f > best_fit) best_fit = f;
+        }
+        float avg = sum / static_cast<float>(pop_.individuals_.size());
+        float div = pop_.diversity();
+
+        result.fitness_history.push_back(best_fit);
+        result.avg_history.push_back(avg);
+        result.diversity_history.push_back(div);
+        result.generations_run = gen + 1;
+        result.best_fitness = best_fit;
+        result.avg_fitness = avg;
+
+        pop_.prev_best_ = best_fit;
+        if (best_fit <= pop_.best_fitness_ + 1e-6f) {
+            pop_.stagnation_++;
+            if (pop_.stagnation_ > 50 && config_.adaptive_mutation) {
+                auto* adapt = dynamic_cast<AdaptiveMutation*>(mutation_.get());
+                if (adapt) adapt->decay();
+                inject_random(0.02f);
+            }
+        } else {
+            pop_.stagnation_ = 0;
+            pop_.best_fitness_ = best_fit;
+        }
+
+        pop_.copy_to_buffer();
+        create_next_generation();
+        pop_.swap_buffers();
+
+        auto now = std::chrono::high_resolution_clock::now();
+        result.elapsed_ms = std::chrono::duration<double, std::milli>(now - start_time_).count();
+
+        return true;
+    }
 
     GAResult run(std::function<float(const Genome&)> fitness_fn, std::function<void(int, const GAResult&)> callback = nullptr) {
         GAResult result;
@@ -167,6 +222,8 @@ public:
             create_next_generation();
             pop_.swap_buffers();
 
+            auto now = std::chrono::high_resolution_clock::now();
+            result.elapsed_ms = std::chrono::duration<double, std::milli>(now - start).count();
             if (callback) callback(gen + 1, result);
         }
 

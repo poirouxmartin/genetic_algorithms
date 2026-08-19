@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(genetic_algorithms LANGUAGES CXX)
+project(genetic_algorithms LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,8 +25,8 @@ else()
     message(STATUS "SDL2 not found - TUI only")
 endif()
 
-add_executable(ga_runner src/main.cpp)
-target_include_directories(ga_runner PRIVATE include)
+add_executable(ga_runner src/main.cpp src/stb_truetype_impl.c)
+target_include_directories(ga_runner PRIVATE include deps)
 target_link_libraries(ga_runner PRIVATE Threads::Threads)
 
 if(SDL2_INCLUDE_DIR)
@@ -41,8 +41,8 @@ if(SDL2_INCLUDE_DIR)
 endif()
 
 if(MSVC)
-    target_compile_options(ga_runner PRIVATE /W4 /O2 /Oi /Ot /GL)
-    target_link_options(ga_runner PRIVATE /LTCG)
+    target_compile_options(ga_runner PRIVATE /W4 /O2 /Oi /Ot)
+    target_link_options(ga_runner PRIVATE /OPT:REF /OPT:ICF)
 else()
     target_compile_options(ga_runner PRIVATE -O3 -march=native -Wall -Wextra)
 endif()

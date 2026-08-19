@@ -110,6 +110,8 @@ public:
 
         bool food_left = food_.first < head.first;
         bool food_right = food_.first > head.first;
+        bool food_up = food_.second < head.second;
+        bool food_down = food_.second > head.second;
 
         bool dir_up = dy_ == -1, dir_down = dy_ == 1;
         bool dir_left = dx_ == -1, dir_right = dx_ == 1;
@@ -121,7 +123,10 @@ public:
         state[4] = dir_right ? 1.0f : 0.0f;
         state[5] = dir_up ? 1.0f : 0.0f;
         state[6] = dir_down ? 1.0f : 0.0f;
-        state[7] = food_left ? 1.0f : (food_right ? 1.0f : 0.0f);
+        state[7] = food_left ? 1.0f : 0.0f;
+        state[8] = food_right ? 1.0f : 0.0f;
+        state[9] = food_up ? 1.0f : 0.0f;
+        state[10] = food_down ? 1.0f : 0.0f;
     }
 
     std::string render_state() const override {
@@ -164,3 +169,6 @@ private:
 };
 
 } // namespace games
+
+#include "ga/game_registry.h"
+REGISTER_GAME(Snake, 11, 16, 200)

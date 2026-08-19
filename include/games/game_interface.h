@@ -5,6 +5,8 @@
 #include <memory>
 #include <cmath>
 
+struct SDL_Renderer;
+
 namespace games {
 
 class GameInterface {
@@ -28,6 +30,9 @@ public:
     virtual bool uses_scoring() const { return false; }
     virtual std::unique_ptr<GameInterface> clone() const { return nullptr; }
     virtual void apply_move_no_state_change(int action) {}
+
+    virtual void render_sdl(SDL_Renderer* r, int x, int y, int w, int h) const {}
+    virtual bool has_sdl_render() const { return false; }
 };
 
 class ScoringNetwork {
@@ -93,7 +98,7 @@ public:
         for (size_t o = 0; o < output_size_; ++o) {
             float sum = genes[offset + hidden_size_ * output_size_ + o];
             for (size_t h = 0; h < hidden_size_; ++h) {
-                sum += genes[offset + h] * hidden[h];
+                sum += genes[offset + o * hidden_size_ + h] * hidden[h];
             }
             output[o] = sum;
             if (sum > best_val) {
