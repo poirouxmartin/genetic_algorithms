@@ -14,6 +14,19 @@ endif()
 # Threading
 find_package(Threads REQUIRED)
 
+# CUDA (optional)
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    add_compile_definitions(HAS_CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_ARCHITECTURES "86;89;90;100")
+    message(STATUS "CUDA found: ${CMAKE_CUDA_COMPILER}")
+else()
+    message(STATUS "CUDA not found - CPU only")
+endif()
+
 # SDL2 (local)
 set(SDL2_DIR "${CMAKE_SOURCE_DIR}/deps/SDL2-2.30.10")
 if(EXISTS "${SDL2_DIR}/include/SDL.h")
@@ -25,7 +38,12 @@ else()
     message(STATUS "SDL2 not found - TUI only")
 endif()
 
-add_executable(ga_runner src/main.cpp src/stb_truetype_impl.c)
+set(SOURCES src/main.cpp src/stb_truetype_impl.c)
+if(CMAKE_CUDA_COMPILER)
+    list(APPEND SOURCES src/gpu_nn.cu)
+endif()
+
+add_executable(ga_runner ${SOURCES})
 target_include_directories(ga_runner PRIVATE include deps)
 target_link_libraries(ga_runner PRIVATE Threads::Threads)
 

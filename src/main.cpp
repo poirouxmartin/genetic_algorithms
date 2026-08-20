@@ -17,6 +17,7 @@
 #include "viz/tui.h"
 #include "viz/replay.h"
 #include "viz/gui.h"
+#include "ga/gpu_nn.h"
 #include <algorithm>
 #include <random>
 #ifdef HAS_SDL2
@@ -67,6 +68,134 @@ void apply_symmetry(ga::GAConfig& cfg, const GameConfig& gc, bool scoring) {
     }
 }
 
+struct GpuBatchResult {
+    std::vector<float> fitnesses;
+};
+
+GpuBatchResult gpu_batch_evaluate(
+    ga::GpuNN& gpu_nn,
+    std::vector<ga::Genome>& genomes,
+    const GameConfig& gc, bool scoring, const ga::GAConfig& cfg)
+{
+    size_t N = genomes.size();
+    GpuBatchResult result;
+    result.fitnesses.resize(N, 0.0f);
+
+    std::vector<std::unique_ptr<games::GameInterface>> games(N);
+    for (size_t i = 0; i < N; ++i) {
+        games[i] = gc.factory();
+        games[i]->reset();
+    }
+
+    std::vector<bool> alive(N, true);
+    std::vector<int> step_counts(N, 0);
+
+    if (scoring) {
+        while (true) {
+            bool any_alive = false;
+            for (size_t i = 0; i < N; ++i)
+                if (alive[i]) any_alive = true;
+            if (!any_alive) break;
+
+            std::vector<std::vector<float>> genes_batch;
+            std::vector<std::vector<std::vector<float>>> move_states_batch;
+            std::vector<std::vector<int>> valid_moves_batch;
+            std::vector<size_t> active_idx;
+
+            for (size_t i = 0; i < N; ++i) {
+                if (!alive[i]) continue;
+                active_idx.push_back(i);
+                genes_batch.push_back(genomes[i].genes);
+                auto valid = games[i]->get_valid_moves();
+                if (valid.empty()) {
+                    games[i]->step(0);
+                    step_counts[i]++;
+                    if (games[i]->is_done() || step_counts[i] >= gc.max_steps) {
+                        result.fitnesses[i] = games[i]->fitness();
+                        alive[i] = false;
+                    }
+                    genes_batch.pop_back();
+                    continue;
+                }
+                valid_moves_batch.push_back(valid);
+                std::vector<std::vector<float>> mstates;
+                for (int a : valid) {
+                    auto sim = games[i]->clone();
+                    sim->step(a);
+                    std::vector<float> ns(gc.input_size);
+                    sim->get_state(ns.data());
+                    mstates.push_back(std::move(ns));
+                }
+                move_states_batch.push_back(std::move(mstates));
+            }
+
+            if (genes_batch.empty()) break;
+
+            auto actions = gpu_nn.batch_scoring_decide(
+                genes_batch, move_states_batch, valid_moves_batch,
+                gc.input_size, gc.hidden_size);
+
+            for (size_t j = 0; j < active_idx.size(); ++j) {
+                size_t i = active_idx[j];
+                games[i]->step(actions[j]);
+                step_counts[i]++;
+                if (games[i]->is_done() || step_counts[i] >= gc.max_steps) {
+                    result.fitnesses[i] = games[i]->fitness();
+                    alive[i] = false;
+                }
+            }
+        }
+    } else {
+        int action_space = gc.factory()->action_space();
+        while (true) {
+            bool any_alive = false;
+            for (size_t i = 0; i < N; ++i)
+                if (alive[i]) any_alive = true;
+            if (!any_alive) break;
+
+            std::vector<std::vector<float>> genes_batch;
+            std::vector<float> states_flat;
+            std::vector<size_t> active_idx;
+
+            for (size_t i = 0; i < N; ++i) {
+                if (!alive[i]) continue;
+                active_idx.push_back(i);
+                genes_batch.push_back(genomes[i].genes);
+                std::vector<float> st(gc.input_size);
+                games[i]->get_state(st.data());
+                states_flat.insert(states_flat.end(), st.begin(), st.end());
+            }
+
+            if (genes_batch.empty()) break;
+
+            auto actions = gpu_nn.batch_policy_decide(
+                genes_batch, states_flat,
+                gc.input_size, gc.hidden_size, action_space);
+
+            for (size_t j = 0; j < active_idx.size(); ++j) {
+                size_t i = active_idx[j];
+                games[i]->step(actions[j]);
+                step_counts[i]++;
+                if (games[i]->is_done() || step_counts[i] >= gc.max_steps) {
+                    result.fitnesses[i] = games[i]->fitness();
+                    alive[i] = false;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < N; ++i) {
+        if (alive[i]) result.fitnesses[i] = games[i]->fitness();
+        if (cfg.l2_lambda > 0.0f) {
+            float l2 = 0.0f;
+            for (float w : genomes[i].genes) l2 += w * w;
+            result.fitnesses[i] -= cfg.l2_lambda * l2;
+        }
+    }
+
+    return result;
+}
+
 ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
     auto game = gc.factory();
     bool scoring = game->uses_scoring();
@@ -86,47 +215,59 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
     tui.set_enabled(show_tui);
 
     ga::GAEngine engine(cfg);
+    ga::GpuNN gpu_nn;
+    bool use_gpu = gpu_nn.is_available();
 
     std::cout << "Running " << gc.display_name << " (genome=" << genome_size
-              << (scoring ? " scoring" : " policy") << ")..." << std::endl;
+              << (scoring ? " scoring" : " policy") << ")"
+              << (use_gpu ? " [GPU]" : " [CPU]") << "..." << std::endl;
 
-    auto result = engine.run_batch([&](ga::Genome& g) {
-        auto tls_game = gc.factory();
-        tls_game->reset();
-        std::vector<float> state(gc.input_size);
-        int steps = 0;
-
-        if (scoring) {
-            games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
-            while (!tls_game->is_done() && steps < gc.max_steps) {
-                auto valid = tls_game->get_valid_moves();
-                if (valid.empty()) { tls_game->step(0); steps++; continue; }
-
-                tls_game->get_state(state.data());
-                int best_action = valid[0];
-                float best_score = -1e30f;
-                for (int a : valid) {
-                    auto sim = tls_game->clone();
-                    sim->step(a);
-                    std::vector<float> new_state(gc.input_size);
-                    sim->get_state(new_state.data());
-                    float s = sn.score(g.genes.data(), new_state.data());
-                    if (s > best_score) { best_score = s; best_action = a; }
-                }
-                tls_game->step(best_action);
-                steps++;
-            }
+    ga::GAResult result;
+    for (int gen = 0; gen < cfg.max_generations; ++gen) {
+        if (use_gpu) {
+            engine.step_gpu([&](std::vector<ga::Genome>& genomes) {
+                return gpu_batch_evaluate(gpu_nn, genomes, gc, scoring, cfg).fitnesses;
+            }, result);
         } else {
-            games::PolicyNetwork pn(gc.input_size, gc.hidden_size, tls_game->action_space());
-            while (!tls_game->is_done() && steps < gc.max_steps) {
-                tls_game->get_state(state.data());
-                int action = pn.decide(g.genes.data(), state.data());
-                tls_game->step(action);
-                steps++;
-            }
+            engine.step([&](ga::Genome& g) {
+                auto tls_game = gc.factory();
+                tls_game->reset();
+                std::vector<float> state(gc.input_size);
+                int steps = 0;
+
+                if (scoring) {
+                    games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
+                    while (!tls_game->is_done() && steps < gc.max_steps) {
+                        auto valid = tls_game->get_valid_moves();
+                        if (valid.empty()) { tls_game->step(0); steps++; continue; }
+
+                        tls_game->get_state(state.data());
+                        int best_action = valid[0];
+                        float best_score = -1e30f;
+                        for (int a : valid) {
+                            auto sim = tls_game->clone();
+                            sim->step(a);
+                            std::vector<float> new_state(gc.input_size);
+                            sim->get_state(new_state.data());
+                            float s = sn.score(g.genes.data(), new_state.data());
+                            if (s > best_score) { best_score = s; best_action = a; }
+                        }
+                        tls_game->step(best_action);
+                        steps++;
+                    }
+                } else {
+                    games::PolicyNetwork pn(gc.input_size, gc.hidden_size, tls_game->action_space());
+                    while (!tls_game->is_done() && steps < gc.max_steps) {
+                        tls_game->get_state(state.data());
+                        int action = pn.decide(g.genes.data(), state.data());
+                        tls_game->step(action);
+                        steps++;
+                    }
+                }
+                g.fitness = tls_game->fitness();
+            }, result);
         }
-        g.fitness = tls_game->fitness();
-    });
+    }
 
     std::cout << "  Best: " << result.best_fitness
               << "  Time: " << std::fixed << std::setprecision(1) << result.elapsed_ms << " ms"
@@ -366,6 +507,8 @@ int main(int argc, char* argv[]) {
             int display_step = 0;
             std::vector<ga::Genome> watch_roster;
             int watch_idx = 0;
+            ga::GpuNN gpu_nn;
+            bool use_gpu = gpu_nn.is_available();
 
             auto eval_fn = [&](ga::Genome& g) {
                 auto tls_game = gc.factory();
@@ -542,8 +685,17 @@ int main(int argc, char* argv[]) {
                         watch_step = 0;
                     }
 
-                    if (sim_running && result.generations_run < cfg.max_generations)
-                        engine.step(eval_fn, result);
+                    if (sim_running && result.generations_run < cfg.max_generations) {
+                        if (use_gpu) {
+                            engine.step_gpu([&](std::vector<ga::Genome>& genomes) {
+                                auto batch_result = gpu_batch_evaluate(
+                                    gpu_nn, genomes, gc, scoring, cfg);
+                                return batch_result.fitnesses;
+                            }, result);
+                        } else {
+                            engine.step(eval_fn, result);
+                        }
+                    }
 
                     const float* nn_data = nullptr;
                     size_t in_s = 0, hid_s = 0, out_s = 0;

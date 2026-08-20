@@ -252,6 +252,61 @@ public:
         return result;
     }
 
+    // GPU batch step: evaluates all genomes in lockstep, batching NN inference
+    bool step_gpu(std::function<std::vector<float>(std::vector<Genome>&)> batch_eval, GAResult& result) {
+        if (result.generations_run >= config_.max_generations) return false;
+
+        auto gen = result.generations_run;
+        auto fitnesses = batch_eval(pop_.individuals_);
+
+        for (size_t i = 0; i < pop_.individuals_.size(); ++i)
+            pop_.individuals_[i].fitness = fitnesses[i];
+
+        float best_fit = -1e30f;
+        size_t best_idx = 0;
+        float sum = 0.0f;
+        for (size_t i = 0; i < pop_.individuals_.size(); ++i) {
+            float f = pop_.individuals_[i].fitness;
+            sum += f;
+            if (f > best_fit) { best_fit = f; best_idx = i; }
+        }
+        float avg = sum / static_cast<float>(pop_.individuals_.size());
+        float div = pop_.diversity();
+
+        if (best_fit > result.best_fitness || result.generations_run == 0) {
+            result.best_genome = pop_.individuals_[best_idx];
+            result.best_fitness = best_fit;
+        }
+
+        result.fitness_history.push_back(best_fit);
+        result.avg_history.push_back(avg);
+        result.diversity_history.push_back(div);
+        result.generations_run = gen + 1;
+        result.avg_fitness = avg;
+
+        pop_.prev_best_ = best_fit;
+        if (best_fit <= pop_.best_fitness_ + 1e-6f) {
+            pop_.stagnation_++;
+            if (pop_.stagnation_ > 50 && config_.adaptive_mutation) {
+                auto* adapt = dynamic_cast<AdaptiveMutation*>(mutation_.get());
+                if (adapt) adapt->decay();
+                inject_random(0.02f);
+            }
+        } else {
+            pop_.stagnation_ = 0;
+            pop_.best_fitness_ = best_fit;
+        }
+
+        pop_.copy_to_buffer();
+        create_next_generation();
+        pop_.swap_buffers();
+
+        auto now = std::chrono::high_resolution_clock::now();
+        result.elapsed_ms = std::chrono::duration<double, std::milli>(now - start_time_).count();
+
+        return true;
+    }
+
 private:
     void create_next_generation() {
         size_t pop_size = pop_.size();
