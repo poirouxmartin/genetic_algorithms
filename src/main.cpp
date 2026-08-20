@@ -507,16 +507,16 @@ int main(int argc, char* argv[]) {
                     if (sim_running && result.generations_run < cfg.max_generations)
                         engine.step(eval_fn, result);
 
-                    if (result.generations_run > 0) {
-                        const float* nn_data = nullptr;
-                        size_t in_s = 0, hid_s = 0, out_s = 0;
-                        if (!result.best_genome.genes.empty()) {
-                            nn_data = result.best_genome.genes.data();
-                            in_s = gc.input_size; hid_s = gc.hidden_size;
-                            if (!scoring) out_s = action_space_size;
-                        }
+                    const float* nn_data = nullptr;
+                    size_t in_s = 0, hid_s = 0, out_s = 0;
+                    if (!result.best_genome.genes.empty()) {
+                        nn_data = result.best_genome.genes.data();
+                        in_s = gc.input_size; hid_s = gc.hidden_size;
+                        if (!scoring) out_s = action_space_size;
+                    }
 
-                        if (!display_game) { display_game = gc.factory(); display_game->reset(); display_step = 0; }
+                    if (!display_game) { display_game = gc.factory(); display_game->reset(); display_step = 0; }
+                    if (result.generations_run > 0) {
                         const auto& best2 = result.best_genome;
                         if (!best2.genes.empty()) {
                             if (display_game->is_done() || display_step >= gc.max_steps) {
@@ -553,11 +553,11 @@ int main(int argc, char* argv[]) {
                             }
                         }
                         game_state = display_game->render_state();
-
-                        gui.render_sim(result, gc.display_name, result.generations_run, cfg.max_generations,
-                                       sim_running, nn_data, in_s, hid_s, out_s, game_state,
-                                       display_game.get());
                     }
+
+                    gui.render_sim(result, gc.display_name, result.generations_run, cfg.max_generations,
+                                   sim_running, nn_data, in_s, hid_s, out_s, game_state,
+                                   display_game.get());
                 }
             }
         }
