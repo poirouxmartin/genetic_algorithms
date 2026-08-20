@@ -31,7 +31,7 @@ static const SDL_Color COL_GRID   {42,  45,  62,  255};
 
 class GUI {
 public:
-    enum class Action { None, PauseResume, Stop, Watch, Back, Menu };
+    enum class Action { None, PauseResume, Stop, Watch, Back, Menu, Prev, Next };
 
     struct Slider {
         const char* label;
@@ -67,6 +67,8 @@ private:
     Button btn_a_{};
     Button btn_b_{};
     Button btn_menu_{};
+    Button btn_prev_{};
+    Button btn_next_{};
 
 public:
     GUI(int w = 1200, int h = 800) : width_(w), height_(h) {}
@@ -245,6 +247,7 @@ public:
 
     void render_watch(const std::string& game_state, const std::string& game_name,
                       int step, int max_steps, float fitness, float best_fitness,
+                      int genome_idx, int genome_count, float genome_fitness,
                       const games::GameInterface* game_obj = nullptr) {
         if (!initialized_) return;
         SDL_GetWindowSize(window_, &width_, &height_);
@@ -258,7 +261,13 @@ public:
                   + "    Fitness: " + fmt(fitness)
                   + "    Best: " + fmt(best_fitness), 25, 32, COL_TEAL);
 
-        int board_y = 70, board_h = height_ - 70 - 60;
+        int info_y = 62;
+        fill_rect(15, info_y, width_ - 30, 24, COL_PANEL);
+        draw_rect_outline(15, info_y, width_ - 30, 24, COL_BORDER);
+        draw_text("Genome: " + std::to_string(genome_idx + 1) + " / " + std::to_string(genome_count)
+                  + "    Fitness: " + fmt(genome_fitness), 25, info_y + 4, COL_GOLD);
+
+        int board_y = 92, board_h = height_ - 92 - 60;
         fill_rect(15, board_y, width_ - 30, board_h, COL_BG);
         draw_rect_outline(15, board_y, width_ - 30, board_h, COL_BORDER);
         if (game_obj && game_obj->has_sdl_render()) {
@@ -271,9 +280,13 @@ public:
         int bar_y = height_ - 52;
         fill_rect(15, bar_y, width_ - 30, 44, COL_PANEL);
         draw_rect_outline(15, bar_y, width_ - 30, 44, COL_BORDER);
-        btn_a_ = {25, bar_y + 7, 100, 30, "Back", COL_DIM, COL_TEXT};
+        btn_prev_ = {25, bar_y + 7, 80, 30, "< Prev", COL_DIM, COL_TEXT};
+        draw_button(btn_prev_);
+        btn_next_ = {115, bar_y + 7, 80, 30, "Next >", COL_DIM, COL_TEXT};
+        draw_button(btn_next_);
+        btn_a_ = {width_ - 235, bar_y + 7, 100, 30, "Back", COL_DIM, COL_TEXT};
         draw_button(btn_a_);
-        btn_menu_ = {135, bar_y + 7, 100, 30, "Menu", COL_RED, COL_TEXT};
+        btn_menu_ = {width_ - 125, bar_y + 7, 100, 30, "Menu", COL_RED, COL_TEXT};
         draw_button(btn_menu_);
         SDL_RenderPresent(renderer_);
     }
@@ -382,15 +395,23 @@ public:
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) { quit_ = true; return; }
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-                pending_action_ = Action::Menu;
-                return;
+            if (e.type == SDL_KEYDOWN) {
+                if (e.key.keysym.sym == SDLK_ESCAPE) {
+                    pending_action_ = Action::Menu;
+                    return;
+                }
+                if (e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_a)
+                    pending_action_ = Action::Prev;
+                if (e.key.keysym.sym == SDLK_RIGHT || e.key.keysym.sym == SDLK_d)
+                    pending_action_ = Action::Next;
             }
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 int mx = e.button.x, my = e.button.y;
                 if (check_btn(btn_menu_, mx, my)) pending_action_ = Action::Menu;
                 else if (check_btn(btn_a_, mx, my)) pending_action_ = Action::PauseResume;
                 else if (check_btn(btn_b_, mx, my)) pending_action_ = Action::Watch;
+                else if (check_btn(btn_prev_, mx, my)) pending_action_ = Action::Prev;
+                else if (check_btn(btn_next_, mx, my)) pending_action_ = Action::Next;
             }
         }
     }
@@ -828,7 +849,7 @@ namespace viz {
 
 class GUI {
 public:
-    enum class Action { None, PauseResume, Stop, Watch, Back, Menu };
+    enum class Action { None, PauseResume, Stop, Watch, Back, Menu, Prev, Next };
 
     struct Slider { const char* label; float* value; float min_val, max_val, step; };
     bool init() { return false; }
@@ -840,6 +861,7 @@ public:
                     size_t = 0, size_t = 0, size_t = 0, const std::string& = "",
                     const games::GameInterface* = nullptr) {}
     void render_watch(const std::string&, const std::string&, int, int, float, float,
+                      int, int, float,
                       const games::GameInterface* = nullptr) {}
     void render_benchmark(const std::vector<std::pair<std::string, ga::GAResult>>&) {}
     void render_replay(const ReplayData&, int, float) {}

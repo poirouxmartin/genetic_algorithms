@@ -364,6 +364,8 @@ int main(int argc, char* argv[]) {
             std::unique_ptr<games::GameInterface> display_game;
             int watch_step = 0;
             int display_step = 0;
+            std::vector<ga::Genome> watch_roster;
+            int watch_idx = 0;
 
             auto eval_fn = [&](ga::Genome& g) {
                 auto tls_game = gc.factory();
@@ -455,8 +457,21 @@ int main(int argc, char* argv[]) {
                         sim_running = false;
                         break;
                     } else {
-                        if (watch_step < gc.max_steps && !watch_game->is_done()) {
-                            const auto& best = result.best_genome;
+                        if (action == viz::GUI::Action::Prev && !watch_roster.empty()) {
+                            watch_idx = (watch_idx > 0) ? watch_idx - 1 : static_cast<int>(watch_roster.size()) - 1;
+                            watch_game = gc.factory();
+                            watch_game->reset();
+                            watch_step = 0;
+                        }
+                        if (action == viz::GUI::Action::Next && !watch_roster.empty()) {
+                            watch_idx = (watch_idx + 1) % static_cast<int>(watch_roster.size());
+                            watch_game = gc.factory();
+                            watch_game->reset();
+                            watch_step = 0;
+                        }
+
+                        if (watch_step < gc.max_steps && !watch_game->is_done() && !watch_roster.empty()) {
+                            const auto& best = watch_roster[static_cast<size_t>(watch_idx)];
                             if (!best.genes.empty()) {
                                 std::vector<float> st(gc.input_size);
                                 watch_game->get_state(st.data());
@@ -485,9 +500,12 @@ int main(int argc, char* argv[]) {
                                 watch_step++;
                             }
                         }
+                        float wf = watch_roster.empty() ? 0.0f : watch_roster[static_cast<size_t>(watch_idx)].fitness;
                         gui.render_watch(watch_game->render_state(), gc.display_name,
                                          watch_step, gc.max_steps, watch_game->fitness(),
-                                         result.best_fitness, watch_game.get());
+                                         result.best_fitness, watch_idx,
+                                         static_cast<int>(watch_roster.size()), wf,
+                                         watch_game.get());
                     }
                 } else {
                     if (action == viz::GUI::Action::Menu) {
@@ -499,6 +517,14 @@ int main(int argc, char* argv[]) {
                     if (action == viz::GUI::Action::PauseResume) sim_running = !sim_running;
                     if (action == viz::GUI::Action::Watch) {
                         sim_running = false;
+                        watch_roster.clear();
+                        for (auto& g : engine.population().individuals_) {
+                            if (!g.genes.empty()) watch_roster.push_back(g);
+                        }
+                        std::sort(watch_roster.begin(), watch_roster.end(),
+                                  [](const ga::Genome& a, const ga::Genome& b) { return a.fitness > b.fitness; });
+                        if (watch_roster.size() > 20) watch_roster.resize(20);
+                        watch_idx = 0;
                         watch_game = gc.factory();
                         watch_game->reset();
                         watch_step = 0;
