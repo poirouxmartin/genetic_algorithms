@@ -122,7 +122,8 @@ public:
         if (done_) return;
         if (action < 0 || action >= 4) return;
 
-        int rotations = action;
+        static const int rots[] = {3, 2, 1, 0};
+        int rotations = rots[action];
         for (int i = 0; i < rotations; ++i) rotate_cw();
         bool changed = slide_left();
         for (int i = 0; i < (4 - rotations) % 4; ++i) rotate_cw();
