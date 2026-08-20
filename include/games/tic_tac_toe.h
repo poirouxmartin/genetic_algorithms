@@ -82,4 +82,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(TicTacToe, 9, 12, 9)
+REGISTER_GAME(TicTacToe, 9, {12}, 9)

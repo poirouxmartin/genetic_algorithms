@@ -36,7 +36,7 @@
 #include <iomanip>
 
 ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300,
-                         int input_size = 0, int hidden_size = 0) {
+                         int input_size = 0, const std::vector<int>& hidden_layers = {}) {
     ga::GAConfig cfg;
     cfg.population_size = pop;
     cfg.gene_count = genome_size;
@@ -51,7 +51,7 @@ ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300,
     cfg.adaptive_mutation = true;
     cfg.parallel_eval = true;
     cfg.input_size = input_size;
-    cfg.hidden_size = hidden_size;
+    cfg.hidden_layers = hidden_layers;
     return cfg;
 }
 
@@ -61,12 +61,14 @@ bool matches_game(const GameConfig& gc, const std::string& name) {
 
 void apply_symmetry(ga::GAConfig& cfg, const GameConfig& gc, bool scoring) {
     if (!gc.input_symmetry.empty() && !scoring) {
-        size_t in = gc.input_size, hid = gc.hidden_size;
+        const auto& layers = gc.hidden_layers;
+        if (layers.empty()) return;
+        int fan_in = static_cast<int>(gc.input_size);
+        int fan_out = layers[0];
         for (auto [i, j] : gc.input_symmetry) {
-            for (size_t h = 0; h < hid; ++h)
-                cfg.symmetry_pairs.emplace_back(
-                    static_cast<int>(h * in + i),
-                    static_cast<int>(h * in + j));
+            for (int o = 0; o < fan_out; ++o) {
+                cfg.symmetry_pairs.emplace_back(o * fan_in + i, o * fan_in + j);
+            }
         }
     }
 }
@@ -136,7 +138,7 @@ GpuBatchResult gpu_batch_evaluate(
 
             auto actions = gpu_nn.batch_scoring_decide(
                 genes_batch, move_states_batch, valid_moves_batch,
-                gc.input_size, gc.hidden_size);
+                gc.hidden_layers);
 
             for (size_t j = 0; j < active_idx.size(); ++j) {
                 size_t i = active_idx[j];
@@ -173,7 +175,7 @@ GpuBatchResult gpu_batch_evaluate(
 
             auto actions = gpu_nn.batch_policy_decide(
                 genes_batch, states_flat,
-                gc.input_size, gc.hidden_size, action_space);
+                gc.hidden_layers);
 
             for (size_t j = 0; j < active_idx.size(); ++j) {
                 size_t i = active_idx[j];
@@ -205,13 +207,13 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
 
     size_t genome_size;
     if (scoring) {
-        genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_size);
+        genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_layers);
     } else {
-        genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_size, game->action_space());
+        genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_layers, game->action_space());
     }
 
     auto cfg = make_config(genome_size, 300, 300,
-                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+                           static_cast<int>(gc.input_size), gc.hidden_layers);
     apply_symmetry(cfg, gc, scoring);
 
     viz::TUI tui(80, 30);
@@ -219,7 +221,7 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
 
     ga::GAEngine engine(cfg);
     ga::GpuNN gpu_nn;
-    bool use_gpu = gpu_nn.is_available() && genome_size > 1000;
+    bool use_gpu = gpu_nn.is_available();
 
     std::cout << "Running " << gc.display_name << " (genome=" << genome_size
               << (scoring ? " scoring" : " policy") << ")"
@@ -239,7 +241,7 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
                 int steps = 0;
 
                 if (scoring) {
-                    games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
+                    games::ScoringNetwork sn(gc.input_size, gc.hidden_layers);
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         auto valid = tls_game->get_valid_moves();
                         if (valid.empty()) { tls_game->step(0); steps++; continue; }
@@ -259,7 +261,7 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
                         steps++;
                     }
                 } else {
-                    games::PolicyNetwork pn(gc.input_size, gc.hidden_size, tls_game->action_space());
+                    games::PolicyNetwork pn(gc.input_size, gc.hidden_layers, tls_game->action_space());
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         tls_game->get_state(state.data());
                         int action = pn.decide(g.genes.data(), state.data());
@@ -337,45 +339,61 @@ int main(int argc, char* argv[]) {
 
         float pop_size = 300.0f;
         float gens = 300.0f;
-        float hidden_sz = 0.0f;
+        float num_layers_f = 1.0f;
+        float layer_sz[8] = {16, 16, 16, 16, 16, 16, 16, 16};
         float mut_rate = 0.1f;
         float mut_sigma = 0.2f;
         float cross_rate = 0.85f;
         float tourney = 5.0f;
         float elitism = 0.05f;
 
-        std::vector<viz::GUI::Slider> sliders = {
-            {"Population",    &pop_size,    50, 2000, 50},
-            {"Generations",   &gens,        50, 2000, 50},
-            {"Hidden Size",   &hidden_sz,   0, 128, 1},
-            {"Mutation Rate", &mut_rate,    0.001f, 1.0f, 0.001f, true},
-            {"Mutation Sigma",&mut_sigma,   0.01f, 5.0f, 0.01f, true},
-            {"Crossover Rate",&cross_rate,  0.1f, 1.0f, 0.05f},
-            {"Tournament",    &tourney,     2, 10, 1},
-            {"Elitism",       &elitism,     0.001f, 0.5f, 0.001f, true},
+        char cfg_layer_labels[8][16];
+        std::vector<viz::GUI::Slider> sliders;
+        auto rebuild_cfg_sliders = [&]() {
+            sliders.clear();
+            sliders.push_back({"Population",    &pop_size,    50, 2000, 50});
+            sliders.push_back({"Generations",   &gens,        50, 2000, 50});
+            sliders.push_back({"Num Layers",    &num_layers_f, 1, 8, 1});
+            sliders.push_back({"Mutation Rate", &mut_rate,    0.001f, 1.0f, 0.001f, true});
+            sliders.push_back({"Mutation Sigma",&mut_sigma,   0.01f, 5.0f, 0.01f, true});
+            sliders.push_back({"Crossover Rate",&cross_rate,  0.1f, 1.0f, 0.05f});
+            sliders.push_back({"Tournament",    &tourney,     2, 10, 1});
+            sliders.push_back({"Elitism",       &elitism,     0.001f, 0.5f, 0.001f, true});
+            int nl = static_cast<int>(num_layers_f);
+            for (int i = 0; i < nl; ++i) {
+                snprintf(cfg_layer_labels[i], sizeof(cfg_layer_labels[i]), "Layer %d Size", i + 1);
+                sliders.push_back({cfg_layer_labels[i], &layer_sz[i], 1, 128, 1});
+            }
         };
+        rebuild_cfg_sliders();
+        int num_layers = static_cast<int>(num_layers_f);
 
         bool run_clicked = false;
-        while (gui.render_config(game_idx, configs, sliders, run_clicked)) {}
+        while (gui.render_config(game_idx, configs, sliders, run_clicked)) {
+            int nl = static_cast<int>(num_layers_f);
+            if (nl != num_layers) { num_layers = nl; rebuild_cfg_sliders(); }
+        }
 
         if (run_clicked) {
             const auto& gc = configs[game_idx];
             {
                     auto game = gc.factory();
                     bool scoring = game->uses_scoring();
-                    size_t effective_hidden = (hidden_sz > 0) ? static_cast<size_t>(hidden_sz) : gc.hidden_size;
+                    std::vector<int> effective_layers;
+                    for (int i = 0; i < num_layers; ++i)
+                        effective_layers.push_back(static_cast<int>(layer_sz[i]));
                     size_t genome_size;
                     if (scoring) {
-                        genome_size = games::ScoringNetwork::weight_count(gc.input_size, effective_hidden);
+                        genome_size = games::ScoringNetwork::weight_count(gc.input_size, effective_layers);
                     } else {
-                        genome_size = games::PolicyNetwork::weight_count(gc.input_size, effective_hidden, game->action_space());
+                        genome_size = games::PolicyNetwork::weight_count(gc.input_size, effective_layers, game->action_space());
                     }
 
                     auto cfg = make_config(genome_size,
                                            static_cast<size_t>(pop_size),
                                            static_cast<int>(gens),
                                            static_cast<int>(gc.input_size),
-                                           static_cast<int>(effective_hidden));
+                                           effective_layers);
                     cfg.mutation_rate = mut_rate;
                     cfg.mutation_sigma = mut_sigma;
                     cfg.crossover_rate = cross_rate;
@@ -390,7 +408,7 @@ int main(int argc, char* argv[]) {
                         std::vector<float> state(gc.input_size);
                         int steps = 0;
                         if (scoring) {
-                            games::ScoringNetwork sn(gc.input_size, effective_hidden);
+                            games::ScoringNetwork sn(gc.input_size, effective_layers);
                             while (!tls_game->is_done() && steps < gc.max_steps) {
                                 auto valid = tls_game->get_valid_moves();
                             if (valid.empty()) { tls_game->step(0); steps++; continue; }
@@ -409,7 +427,7 @@ int main(int argc, char* argv[]) {
                                 steps++;
                             }
                         } else {
-                            games::PolicyNetwork pn(gc.input_size, effective_hidden, tls_game->action_space());
+                            games::PolicyNetwork pn(gc.input_size, effective_layers, tls_game->action_space());
                             while (!tls_game->is_done() && steps < gc.max_steps) {
                                 tls_game->get_state(state.data());
                                 int action = pn.decide(g.genes.data(), state.data());
@@ -424,7 +442,7 @@ int main(int argc, char* argv[]) {
                         const float* nn = best.genes.empty() ? nullptr : best.genes.data();
                         size_t os = scoring ? 0 : static_cast<size_t>(game->action_space());
                         gui.render_sim(r, gc.display_name, gen, cfg.max_generations, true,
-                                       nn, gc.input_size, effective_hidden, os);
+                                       nn, gc.input_size, effective_layers, os);
                         if (gui.should_close()) { engine.request_stop(); }
                     });
 
@@ -448,29 +466,42 @@ int main(int argc, char* argv[]) {
         }
 
         float pop_size = 300.0f, gens = 1000.0f;
-        float hidden_sz = 0.0f;
+        float num_layers_f = 1.0f;
+        float layer_sz[8] = {16, 16, 16, 16, 16, 16, 16, 16};
         float mut_rate = 0.1f, mut_sigma = 0.2f;
         float cross_rate = 0.85f, tourney = 3.0f, elitism = 0.05f;
         float l2_lambda = 0.0f;
         int selected_game = game_idx;
+        std::vector<viz::GUI::Slider> sliders;
+        char layer_labels[8][16];
 
-        std::vector<viz::GUI::Slider> sliders = {
-            {"Population",     &pop_size,     50, 2000, 50},
-            {"Generations",    &gens,         50, 5000, 50},
-            {"Hidden Size",    &hidden_sz,    0, 128, 1},
-            {"Mutation Rate",  &mut_rate,     0.001f, 1.0f, 0.001f, true},
-            {"Mutation Sigma", &mut_sigma,    0.01f, 5.0f, 0.01f, true},
-            {"Crossover Rate", &cross_rate,   0.1f, 1.0f, 0.05f},
-            {"Tournament",     &tourney,      2, 10, 1},
-            {"Elitism",        &elitism,      0.001f, 0.5f, 0.001f, true},
-            {"L2 Weight Decay",&l2_lambda,    0.00001f, 0.1f, 0.00001f, true},
+        auto rebuild_sliders = [&]() {
+            sliders.clear();
+            sliders.push_back({"Population",     &pop_size,     50, 2000, 50});
+            sliders.push_back({"Generations",    &gens,         50, 5000, 50});
+            sliders.push_back({"Num Layers",     &num_layers_f, 1, 8, 1});
+            sliders.push_back({"Mutation Rate",  &mut_rate,     0.001f, 1.0f, 0.001f, true});
+            sliders.push_back({"Mutation Sigma", &mut_sigma,    0.01f, 5.0f, 0.01f, true});
+            sliders.push_back({"Crossover Rate", &cross_rate,   0.1f, 1.0f, 0.05f});
+            sliders.push_back({"Tournament",     &tourney,      2, 10, 1});
+            sliders.push_back({"Elitism",        &elitism,      0.001f, 0.5f, 0.001f, true});
+            sliders.push_back({"L2 Weight Decay",&l2_lambda,    0.00001f, 0.1f, 0.00001f, true});
+            int nl = static_cast<int>(num_layers_f);
+            for (int i = 0; i < nl; ++i) {
+                snprintf(layer_labels[i], sizeof(layer_labels[i]), "Layer %d Size", i + 1);
+                sliders.push_back({layer_labels[i], &layer_sz[i], 1, 128, 1});
+            }
         };
+        rebuild_sliders();
+        int num_layers = static_cast<int>(num_layers_f);
 
         while (!gui.should_close()) {
             bool run_clicked = false;
             bool config_open = true;
             while (config_open && !gui.should_close()) {
                 SDL_Delay(16);
+                int nl = static_cast<int>(num_layers_f);
+                if (nl != num_layers) { num_layers = nl; rebuild_sliders(); }
                 config_open = gui.render_config(selected_game, configs, sliders, run_clicked);
             }
             if (gui.should_close()) break;
@@ -480,12 +511,14 @@ int main(int argc, char* argv[]) {
 
             auto game = gc.factory();
             bool scoring = game->uses_scoring();
-            size_t effective_hidden = (hidden_sz > 0) ? static_cast<size_t>(hidden_sz) : gc.hidden_size;
+            std::vector<int> effective_layers;
+            for (int i = 0; i < num_layers; ++i)
+                effective_layers.push_back(static_cast<int>(layer_sz[i]));
             size_t genome_size;
             if (scoring)
-                genome_size = games::ScoringNetwork::weight_count(gc.input_size, effective_hidden);
+                genome_size = games::ScoringNetwork::weight_count(gc.input_size, effective_layers);
             else
-                genome_size = games::PolicyNetwork::weight_count(gc.input_size, effective_hidden, game->action_space());
+                genome_size = games::PolicyNetwork::weight_count(gc.input_size, effective_layers, game->action_space());
 
             ga::GAConfig cfg;
             cfg.population_size = static_cast<size_t>(pop_size);
@@ -501,7 +534,7 @@ int main(int argc, char* argv[]) {
             cfg.adaptive_mutation = true;
             cfg.parallel_eval = true;
             cfg.input_size = static_cast<int>(gc.input_size);
-            cfg.hidden_size = static_cast<int>(effective_hidden);
+            cfg.hidden_layers = effective_layers;
             cfg.l2_lambda = l2_lambda;
             apply_symmetry(cfg, gc, scoring);
 
@@ -517,7 +550,7 @@ int main(int argc, char* argv[]) {
             std::vector<ga::Genome> watch_roster;
             int watch_idx = 0;
             ga::GpuNN gpu_nn;
-            bool use_gpu = gpu_nn.is_available() && genome_size > 1000;
+    bool use_gpu = gpu_nn.is_available();
 
             auto eval_fn = [&](ga::Genome& g) {
                 auto tls_game = gc.factory();
@@ -525,7 +558,7 @@ int main(int argc, char* argv[]) {
                 std::vector<float> state(gc.input_size);
                 int steps = 0;
                 if (scoring) {
-                    games::ScoringNetwork sn(gc.input_size, effective_hidden);
+                    games::ScoringNetwork sn(gc.input_size, effective_layers);
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         auto valid = tls_game->get_valid_moves();
                         if (valid.empty()) { tls_game->step(0); steps++; continue; }
@@ -542,7 +575,7 @@ int main(int argc, char* argv[]) {
                         tls_game->step(ba); steps++;
                     }
                 } else {
-                    games::PolicyNetwork pn(gc.input_size, effective_hidden, tls_game->action_space());
+                    games::PolicyNetwork pn(gc.input_size, effective_layers, tls_game->action_space());
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         tls_game->get_state(state.data());
                         int action = pn.decide(g.genes.data(), state.data());
@@ -564,7 +597,7 @@ int main(int argc, char* argv[]) {
                 pg->reset();
                 std::vector<float> st(gc.input_size);
                 if (scoring) {
-                    games::ScoringNetwork sn(gc.input_size, effective_hidden);
+                    games::ScoringNetwork sn(gc.input_size, effective_layers);
                     int s = 0;
                     while (!pg->is_done() && s < gc.max_steps) {
                         auto valid = pg->get_valid_moves();
@@ -582,7 +615,7 @@ int main(int argc, char* argv[]) {
                         pg->step(ba); s++;
                     }
                 } else {
-                    games::PolicyNetwork pn(gc.input_size, effective_hidden, pg->action_space());
+                    games::PolicyNetwork pn(gc.input_size, effective_layers, pg->action_space());
                     int s = 0;
                     while (!pg->is_done() && s < gc.max_steps) {
                         pg->get_state(st.data());
@@ -637,7 +670,7 @@ int main(int argc, char* argv[]) {
                                 std::vector<float> st(gc.input_size);
                                 watch_game->get_state(st.data());
                                 if (scoring) {
-                                    games::ScoringNetwork sn(gc.input_size, effective_hidden);
+                                    games::ScoringNetwork sn(gc.input_size, effective_layers);
                                     auto valid = watch_game->get_valid_moves();
                                     if (valid.empty()) {
                                         watch_game->step(0);
@@ -654,7 +687,7 @@ int main(int argc, char* argv[]) {
                                         watch_game->step(ba);
                                     }
                                 } else {
-                                    games::PolicyNetwork pn(gc.input_size, effective_hidden, watch_game->action_space());
+                                    games::PolicyNetwork pn(gc.input_size, effective_layers, watch_game->action_space());
                                     int act = pn.decide(best.genes.data(), st.data());
                                     watch_game->step(act);
                                 }
@@ -707,10 +740,11 @@ int main(int argc, char* argv[]) {
                     }
 
                     const float* nn_data = nullptr;
-                    size_t in_s = 0, hid_s = 0, out_s = 0;
+                    size_t in_s = 0, out_s = 0;
+                    const std::vector<int>* hid_s = nullptr;
                     if (!result.best_genome.genes.empty()) {
                         nn_data = result.best_genome.genes.data();
-                        in_s = gc.input_size; hid_s = effective_hidden;
+                        in_s = gc.input_size; hid_s = &effective_layers;
                         if (!scoring) out_s = action_space_size;
                     }
 
@@ -725,7 +759,7 @@ int main(int argc, char* argv[]) {
                             if (!display_game->is_done() && display_step < gc.max_steps) {
                                 std::vector<float> st2(gc.input_size);
                                 if (scoring) {
-                                    games::ScoringNetwork sn2(gc.input_size, effective_hidden);
+                                    games::ScoringNetwork sn2(gc.input_size, effective_layers);
                                     auto valid2 = display_game->get_valid_moves();
                                     if (valid2.empty()) {
                                         display_game->step(0);
@@ -743,7 +777,7 @@ int main(int argc, char* argv[]) {
                                         display_game->step(ba2);
                                     }
                                 } else {
-                                    games::PolicyNetwork pn2(gc.input_size, effective_hidden, display_game->action_space());
+                                    games::PolicyNetwork pn2(gc.input_size, effective_layers, display_game->action_space());
                                     display_game->get_state(st2.data());
                                     int act2 = pn2.decide(best2.genes.data(), st2.data());
                                     display_game->step(act2);
@@ -755,7 +789,7 @@ int main(int argc, char* argv[]) {
                     }
 
                     gui.render_sim(result, gc.display_name, result.generations_run, cfg.max_generations,
-                                   sim_running, nn_data, in_s, hid_s, out_s, game_state,
+                                   sim_running, nn_data, in_s, *hid_s, out_s, game_state,
                                    display_game.get());
                 }
             }
@@ -783,12 +817,12 @@ int main(int argc, char* argv[]) {
             bool scoring = game->uses_scoring();
             size_t genome_size;
             if (scoring)
-                genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_size);
+                genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_layers);
             else
-                genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_size, game->action_space());
+                genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_layers, game->action_space());
 
             auto cfg = make_config(genome_size, 200, 300,
-                                   static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+                                   static_cast<int>(gc.input_size), gc.hidden_layers);
             apply_symmetry(cfg, gc, scoring);
             ga::GAEngine engine(cfg);
 
@@ -799,7 +833,7 @@ int main(int argc, char* argv[]) {
                 int steps = 0;
 
                 if (scoring) {
-                    games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
+                    games::ScoringNetwork sn(gc.input_size, gc.hidden_layers);
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         auto valid = tls_game->get_valid_moves();
                         if (valid.empty()) { tls_game->step(0); steps++; continue; }
@@ -818,7 +852,7 @@ int main(int argc, char* argv[]) {
                         steps++;
                     }
                 } else {
-                    games::PolicyNetwork pn(gc.input_size, gc.hidden_size, tls_game->action_space());
+                    games::PolicyNetwork pn(gc.input_size, gc.hidden_layers, tls_game->action_space());
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         tls_game->get_state(state.data());
                         int action = pn.decide(g.genes.data(), state.data());
@@ -836,7 +870,7 @@ int main(int argc, char* argv[]) {
 
             viz::ReplayData replay = viz::capture_replay(
                 result.best_genome, gc.factory, gc.display_name,
-                gc.input_size, gc.hidden_size, gc.max_steps);
+                gc.input_size, gc.hidden_layers, gc.max_steps);
 
             std::cout << "Replaying " << replay.frames.size() << " frames. Press ESC to exit.\n";
 
@@ -916,9 +950,9 @@ int main(int argc, char* argv[]) {
             bool scoring = game->uses_scoring();
             size_t genome_size;
             if (scoring)
-                genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_size);
+                genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_layers);
             else
-                genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_size, game->action_space());
+                genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_layers, game->action_space());
 
             ga::IslandConfig icfg;
             icfg.num_islands = 4;
@@ -926,7 +960,7 @@ int main(int argc, char* argv[]) {
             icfg.migration_interval = 20;
             icfg.migration_count = 5;
             icfg.base_config = make_config(genome_size, 75, 300,
-                                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+                                           static_cast<int>(gc.input_size), gc.hidden_layers);
             icfg.base_config.adaptive_mutation = true;
 
             ga::IslandGAEngine engine(icfg);
@@ -938,7 +972,7 @@ int main(int argc, char* argv[]) {
                 int steps = 0;
 
                 if (scoring) {
-                    games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
+                    games::ScoringNetwork sn(gc.input_size, gc.hidden_layers);
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         auto valid = tls_game->get_valid_moves();
                         if (valid.empty()) { tls_game->step(0); steps++; continue; }
@@ -957,7 +991,7 @@ int main(int argc, char* argv[]) {
                         steps++;
                     }
                 } else {
-                    games::PolicyNetwork pn(gc.input_size, gc.hidden_size, tls_game->action_space());
+                    games::PolicyNetwork pn(gc.input_size, gc.hidden_layers, tls_game->action_space());
                     while (!tls_game->is_done() && steps < gc.max_steps) {
                         tls_game->get_state(state.data());
                         int action = pn.decide(g.genes.data(), state.data());
@@ -1032,9 +1066,9 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
 
-                size_t genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_size);
+                size_t genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_layers);
     auto cfg = make_config(genome_size, 300, 300,
-                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+                           static_cast<int>(gc.input_size), gc.hidden_layers);
                 apply_symmetry(cfg, gc, true);
                 ga::GAEngine engine(cfg);
 
@@ -1055,7 +1089,7 @@ int main(int argc, char* argv[]) {
 
                         auto match_game = gc.factory();
                         match_game->reset();
-                        games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
+                        games::ScoringNetwork sn(gc.input_size, gc.hidden_layers);
 
                         std::vector<float> state(gc.input_size);
                         int steps = 0;

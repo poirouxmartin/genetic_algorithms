@@ -198,4 +198,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(FlappyBird, 6, 10, 1000)
+REGISTER_GAME(FlappyBird, 6, {10}, 1000)

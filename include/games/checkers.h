@@ -448,4 +448,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Checkers, "Checkers", 67, 16, 2000)
+REGISTER_GAME_DISPLAY(Checkers, "Checkers", 67, {16}, 2000)

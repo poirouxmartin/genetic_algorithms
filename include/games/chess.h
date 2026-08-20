@@ -579,4 +579,4 @@ private:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Chess, "Chess", 70, 20, 2000)
+REGISTER_GAME_DISPLAY(Chess, "Chess", 70, {20}, 2000)

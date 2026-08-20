@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <cmath>
+#include <numeric>
 
 struct SDL_Renderer;
 
@@ -35,82 +36,98 @@ public:
     virtual bool has_sdl_render() const { return false; }
 };
 
+// hidden_layers: sizes of hidden layers, e.g. {64, 32} for two hidden layers.
+// Genome layout: for each consecutive pair in [input, h1, h2, ..., hn, output]:
+//   weights (fan_in * fan_out) + biases (fan_out)
+
+inline std::vector<int> make_full_layers(int input, const std::vector<int>& hidden_layers, int output) {
+    std::vector<int> layers;
+    layers.reserve(hidden_layers.size() + 2);
+    layers.push_back(input);
+    for (int h : hidden_layers) layers.push_back(h);
+    layers.push_back(output);
+    return layers;
+}
+
+inline size_t weight_count_from_layers(const std::vector<int>& layers) {
+    size_t total = 0;
+    for (size_t i = 0; i + 1 < layers.size(); ++i)
+        total += static_cast<size_t>(layers[i]) * static_cast<size_t>(layers[i + 1]) + static_cast<size_t>(layers[i + 1]);
+    return total;
+}
+
 class ScoringNetwork {
-    size_t input_size_;
-    size_t hidden_size_;
+    std::vector<int> layers_;
 
 public:
-    ScoringNetwork(size_t input, size_t hidden)
-        : input_size_(input), hidden_size_(hidden) {}
+    ScoringNetwork(int input, const std::vector<int>& hidden_layers)
+        : layers_(make_full_layers(input, hidden_layers, 1)) {}
 
     float score(const float* genes, const float* state) const {
-        std::vector<float> hidden(hidden_size_);
-
+        std::vector<float> cur(state, state + layers_[0]);
+        std::vector<float> nxt;
         size_t offset = 0;
-        for (size_t h = 0; h < hidden_size_; ++h) {
-            float sum = genes[input_size_ * hidden_size_ + h];
-            for (size_t i = 0; i < input_size_; ++i) {
-                sum += genes[offset + i] * state[i];
+        for (size_t l = 0; l + 1 < layers_.size(); ++l) {
+            int fan_in = layers_[l];
+            int fan_out = layers_[l + 1];
+            bool is_output = (l + 2 == layers_.size());
+            nxt.resize(fan_out);
+            for (int o = 0; o < fan_out; ++o) {
+                float sum = genes[offset + fan_in * fan_out + o];
+                for (int i = 0; i < fan_in; ++i)
+                    sum += genes[offset + o * fan_in + i] * cur[i];
+                nxt[o] = is_output ? sum : std::tanh(sum);
             }
-            hidden[h] = std::tanh(sum);
-            offset += input_size_;
+            cur.swap(nxt);
+            offset += static_cast<size_t>(fan_in) * fan_out + fan_out;
         }
-
-        offset = input_size_ * hidden_size_ + hidden_size_;
-        float sum = genes[offset + hidden_size_];
-        for (size_t h = 0; h < hidden_size_; ++h) {
-            sum += genes[offset + h] * hidden[h];
-        }
-        return sum;
+        return cur[0];
     }
 
-    static size_t weight_count(size_t input, size_t hidden) {
-        return input * hidden + hidden + hidden + 1;
+    const std::vector<int>& layers() const { return layers_; }
+
+    static size_t weight_count(int input, const std::vector<int>& hidden_layers) {
+        return weight_count_from_layers(make_full_layers(input, hidden_layers, 1));
     }
 };
 
 class PolicyNetwork {
-    size_t input_size_;
-    size_t hidden_size_;
-    size_t output_size_;
+    std::vector<int> layers_;
 
 public:
-    PolicyNetwork(size_t input, size_t hidden, size_t output)
-        : input_size_(input), hidden_size_(hidden), output_size_(output) {}
+    PolicyNetwork(int input, const std::vector<int>& hidden_layers, int output)
+        : layers_(make_full_layers(input, hidden_layers, output)) {}
 
     int decide(const float* genes, const float* state) const {
-        std::vector<float> hidden(hidden_size_);
-        std::vector<float> output(output_size_);
-
+        std::vector<float> cur(state, state + layers_[0]);
+        std::vector<float> nxt;
         size_t offset = 0;
-        for (size_t h = 0; h < hidden_size_; ++h) {
-            float sum = genes[input_size_ * hidden_size_ + h];
-            for (size_t i = 0; i < input_size_; ++i) {
-                sum += genes[offset + i] * state[i];
+        for (size_t l = 0; l + 1 < layers_.size(); ++l) {
+            int fan_in = layers_[l];
+            int fan_out = layers_[l + 1];
+            bool is_output = (l + 2 == layers_.size());
+            nxt.resize(fan_out);
+            for (int o = 0; o < fan_out; ++o) {
+                float sum = genes[offset + fan_in * fan_out + o];
+                for (int i = 0; i < fan_in; ++i)
+                    sum += genes[offset + o * fan_in + i] * cur[i];
+                nxt[o] = is_output ? sum : std::tanh(sum);
             }
-            hidden[h] = std::tanh(sum);
-            offset += input_size_;
+            cur.swap(nxt);
+            offset += static_cast<size_t>(fan_in) * fan_out + fan_out;
         }
-
-        offset = input_size_ * hidden_size_ + hidden_size_;
         int best_action = 0;
         float best_val = -1e30f;
-        for (size_t o = 0; o < output_size_; ++o) {
-            float sum = genes[offset + hidden_size_ * output_size_ + o];
-            for (size_t h = 0; h < hidden_size_; ++h) {
-                sum += genes[offset + o * hidden_size_ + h] * hidden[h];
-            }
-            output[o] = sum;
-            if (sum > best_val) {
-                best_val = sum;
-                best_action = static_cast<int>(o);
-            }
+        for (int o = 0; o < static_cast<int>(cur.size()); ++o) {
+            if (cur[o] > best_val) { best_val = cur[o]; best_action = o; }
         }
         return best_action;
     }
 
-    static size_t weight_count(size_t input, size_t hidden, size_t output) {
-        return input * hidden + hidden + hidden * output + output;
+    const std::vector<int>& layers() const { return layers_; }
+
+    static size_t weight_count(int input, const std::vector<int>& hidden_layers, int output) {
+        return weight_count_from_layers(make_full_layers(input, hidden_layers, output));
     }
 };
 

@@ -131,4 +131,4 @@ inline std::once_flag Maze::grid_init_flag_;
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Maze, 12, 12, 500)
+REGISTER_GAME(Maze, 12, {12}, 500)

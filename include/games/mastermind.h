@@ -105,4 +105,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Mastermind, 4, 8, 40)
+REGISTER_GAME(Mastermind, 4, {8}, 40)

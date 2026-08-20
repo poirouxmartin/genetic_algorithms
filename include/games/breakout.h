@@ -128,4 +128,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Breakout, 6, 10, 500)
+REGISTER_GAME(Breakout, 6, {10}, 500)

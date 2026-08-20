@@ -211,4 +211,4 @@ inline const int Tetris::SHAPES[NUM_PIECES][4][2] = {
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Tetris, 6, 10, 500)
+REGISTER_GAME(Tetris, 6, {10}, 500)

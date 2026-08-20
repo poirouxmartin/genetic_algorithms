@@ -421,4 +421,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(TrackMania, 13, 20, 1200)
+REGISTER_GAME(TrackMania, 13, {20}, 1200)

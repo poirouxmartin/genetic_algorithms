@@ -10,7 +10,7 @@ struct GameConfig {
     std::string name;
     std::string display_name;
     size_t input_size;
-    size_t hidden_size;
+    std::vector<int> hidden_layers;
     int max_steps;
     std::function<std::unique_ptr<games::GameInterface>()> factory;
     std::vector<std::pair<int,int>> input_symmetry;
@@ -30,26 +30,26 @@ struct GameRegistrar {
     }
 };
 
-#define REGISTER_GAME(ClassName, InputSz, HiddenSz, MaxSteps) \
+#define REGISTER_GAME(ClassName, InputSz, HiddenLayers, MaxSteps) \
     namespace { \
         static GameRegistrar reg_##ClassName( \
-            { #ClassName, #ClassName, InputSz, HiddenSz, MaxSteps, \
+            { #ClassName, #ClassName, InputSz, HiddenLayers, MaxSteps, \
               []{ return std::make_unique<games::ClassName>(); } } \
         ); \
     }
 
-#define REGISTER_GAME_DISPLAY(ClassName, DisplayName, InputSz, HiddenSz, MaxSteps) \
+#define REGISTER_GAME_DISPLAY(ClassName, DisplayName, InputSz, HiddenLayers, MaxSteps) \
     namespace { \
         static GameRegistrar reg_##ClassName( \
-            { #ClassName, DisplayName, InputSz, HiddenSz, MaxSteps, \
+            { #ClassName, DisplayName, InputSz, HiddenLayers, MaxSteps, \
               []{ return std::make_unique<games::ClassName>(); } } \
         ); \
     }
 
-#define REGISTER_GAME_SYM(ClassName, InputSz, HiddenSz, MaxSteps, ...) \
+#define REGISTER_GAME_SYM(ClassName, InputSz, HiddenLayers, MaxSteps, ...) \
     namespace { \
         static GameRegistrar reg_##ClassName( \
-            { #ClassName, #ClassName, InputSz, HiddenSz, MaxSteps, \
+            { #ClassName, #ClassName, InputSz, HiddenLayers, MaxSteps, \
               []{ return std::make_unique<games::ClassName>(); }, \
               { __VA_ARGS__ } } \
         ); \

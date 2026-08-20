@@ -5,16 +5,16 @@
 extern "C" {
 void cuda_batch_policy_decide(
     const float* h_genes, const float* h_states, int* h_actions,
-    int N, int input_size, int hidden_size, int output_size, int gene_size);
+    int N, const int* layer_sizes, int num_layers, int gene_size);
 
 void cuda_batch_score(
     const float* h_genes, const float* h_states, float* h_scores,
-    int N, int input_size, int hidden_size, int gene_size);
+    int N, const int* layer_sizes, int num_layers, int gene_size);
 
 void cuda_batch_scoring_decide(
     const float* h_genes, const float* h_states, const int* h_valid_moves,
     const int* h_move_counts, int* h_best_actions,
-    int N, int input_size, int hidden_size, int gene_size, int max_moves);
+    int N, const int* layer_sizes, int num_layers, int gene_size, int max_moves);
 }
 
 #endif
@@ -39,11 +39,10 @@ public:
 
     bool is_available() const { return available_; }
 
-    // Batch PolicyNetwork: decide actions for N genomes
     std::vector<int> batch_policy_decide(
         const std::vector<std::vector<float>>& genes,
         const std::vector<float>& states_flat,
-        int input_size, int hidden_size, int output_size)
+        const std::vector<int>& layers)
     {
         size_t N = genes.size();
         size_t gene_size = genes[0].size();
@@ -56,26 +55,27 @@ public:
 
             std::vector<int> actions(N);
             cuda_batch_policy_decide(flat_genes.data(), states_flat.data(), actions.data(),
-                                     static_cast<int>(N), input_size, hidden_size, output_size,
+                                     static_cast<int>(N), layers.data(), static_cast<int>(layers.size()),
                                      static_cast<int>(gene_size));
             return actions;
         }
 #endif
-        return cpu_policy_decide(genes, states_flat, input_size, hidden_size, output_size);
+        return cpu_policy_decide(genes, states_flat, layers);
     }
 
-    // Batch ScoringNetwork: score all valid moves per genome, return best
     std::vector<int> batch_scoring_decide(
         const std::vector<std::vector<float>>& genes,
         const std::vector<std::vector<std::vector<float>>>& move_states,
         const std::vector<std::vector<int>>& valid_moves,
-        int input_size, int hidden_size)
+        const std::vector<int>& layers)
     {
         size_t N = genes.size();
         size_t gene_size = genes[0].size();
         size_t max_moves = 0;
         for (auto& vm : valid_moves) max_moves = std::max(max_moves, vm.size());
         if (max_moves == 0) return std::vector<int>(N, 0);
+
+        int input_size = layers[0];
 
 #ifdef HAS_CUDA
         if (available_ && N >= 32) {
@@ -99,44 +99,52 @@ public:
             std::vector<int> actions(N);
             cuda_batch_scoring_decide(flat_genes.data(), flat_states.data(), flat_moves.data(),
                                        move_counts.data(), actions.data(),
-                                       static_cast<int>(N), input_size, hidden_size,
+                                       static_cast<int>(N), layers.data(), static_cast<int>(layers.size()),
                                        static_cast<int>(gene_size), static_cast<int>(max_moves));
             return actions;
         }
 #endif
-        return cpu_scoring_decide(genes, move_states, valid_moves, input_size, hidden_size);
+        return cpu_scoring_decide(genes, move_states, valid_moves, layers);
     }
 
 private:
+    static std::vector<float> forward_pass(const float* genes, const float* input,
+                                           const std::vector<int>& layers) {
+        std::vector<float> cur(input, input + layers[0]);
+        std::vector<float> nxt;
+        size_t offset = 0;
+        for (size_t l = 0; l + 1 < layers.size(); ++l) {
+            int fan_in = layers[l];
+            int fan_out = layers[l + 1];
+            bool is_output = (l + 2 == layers.size());
+            nxt.resize(fan_out);
+            for (int o = 0; o < fan_out; ++o) {
+                float sum = genes[offset + fan_in * fan_out + o];
+                for (int i = 0; i < fan_in; ++i)
+                    sum += genes[offset + o * fan_in + i] * cur[i];
+                nxt[o] = is_output ? sum : std::tanh(sum);
+            }
+            cur.swap(nxt);
+            offset += static_cast<size_t>(fan_in) * fan_out + fan_out;
+        }
+        return cur;
+    }
+
     std::vector<int> cpu_policy_decide(
         const std::vector<std::vector<float>>& genes,
         const std::vector<float>& states_flat,
-        int input_size, int hidden_size, int output_size)
+        const std::vector<int>& layers)
     {
         size_t N = genes.size();
+        int output_size = layers.back();
         std::vector<int> actions(N);
         for (size_t idx = 0; idx < N; ++idx) {
-            const float* g = genes[idx].data();
-            const float* s = states_flat.data() + idx * input_size;
-
-            std::vector<float> hidden(hidden_size);
-            size_t offset = 0;
-            for (int h = 0; h < hidden_size; ++h) {
-                float sum = g[input_size * hidden_size + h];
-                for (int i = 0; i < input_size; ++i)
-                    sum += g[offset + i] * s[i];
-                hidden[h] = std::tanh(sum);
-                offset += input_size;
-            }
-
-            offset = input_size * hidden_size + hidden_size;
+            const float* s = states_flat.data() + idx * layers[0];
+            auto out = forward_pass(genes[idx].data(), s, layers);
             int best = 0;
             float best_val = -1e30f;
             for (int o = 0; o < output_size; ++o) {
-                float sum = g[offset + hidden_size * output_size + o];
-                for (int h = 0; h < hidden_size; ++h)
-                    sum += g[offset + o * hidden_size + h] * hidden[h];
-                if (sum > best_val) { best_val = sum; best = o; }
+                if (out[o] > best_val) { best_val = out[o]; best = o; }
             }
             actions[idx] = best;
         }
@@ -147,33 +155,17 @@ private:
         const std::vector<std::vector<float>>& genes,
         const std::vector<std::vector<std::vector<float>>>& move_states,
         const std::vector<std::vector<int>>& valid_moves,
-        int input_size, int hidden_size)
+        const std::vector<int>& layers)
     {
         size_t N = genes.size();
         std::vector<int> actions(N);
         for (size_t idx = 0; idx < N; ++idx) {
-            const float* g = genes[idx].data();
             int best_action = valid_moves[idx].empty() ? 0 : valid_moves[idx][0];
             float best_score = -1e30f;
 
             for (size_t m = 0; m < valid_moves[idx].size(); ++m) {
-                const float* s = move_states[idx][m].data();
-
-                std::vector<float> hidden(hidden_size);
-                size_t offset = 0;
-                for (int h = 0; h < hidden_size; ++h) {
-                    float sum = g[input_size * hidden_size + h];
-                    for (int i = 0; i < input_size; ++i)
-                        sum += g[offset + i] * s[i];
-                    hidden[h] = std::tanh(sum);
-                    offset += input_size;
-                }
-
-                offset = input_size * hidden_size + hidden_size;
-                float score = g[offset + hidden_size];
-                for (int h = 0; h < hidden_size; ++h)
-                    score += g[offset + h] * hidden[h];
-
+                auto out = forward_pass(genes[idx].data(), move_states[idx][m].data(), layers);
+                float score = out[0];
                 if (score > best_score) {
                     best_score = score;
                     best_action = valid_moves[idx][m];

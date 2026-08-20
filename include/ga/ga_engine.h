@@ -28,8 +28,8 @@ struct GAConfig {
     bool parallel_eval = true;
     std::vector<std::pair<int,int>> symmetry_pairs;
     float l2_lambda = 0.0f; // L2 weight penalty: fitness -= l2_lambda * sum(w^2)
-    int input_size = 0;     // for He init: sigma = sqrt(2/input_size) per layer
-    int hidden_size = 0;
+    std::vector<int> hidden_layers;
+    int input_size = 0;
 };
 
 struct GAResult {
@@ -60,8 +60,8 @@ public:
 
         pop_ = Population(cfg.population_size, cfg.gene_count, cfg.min_gene, cfg.max_gene);
 
-        if (cfg.input_size > 0 && cfg.hidden_size > 0) {
-            he_init(cfg.input_size, cfg.hidden_size);
+        if (cfg.input_size > 0 && !cfg.hidden_layers.empty()) {
+            he_init(cfg.input_size, cfg.hidden_layers);
         }
 
         selection_ = std::make_unique<TournamentSelection>(cfg.tournament_size);
@@ -354,19 +354,29 @@ private:
         }
     }
 
-    void he_init(int input_size, int hidden_size) {
-        std::normal_distribution<float> hid_dist(0.0f, std::sqrt(2.0f / static_cast<float>(input_size)));
-        std::normal_distribution<float> out_dist(0.0f, std::sqrt(2.0f / static_cast<float>(hidden_size)));
+    void he_init(int input_size, const std::vector<int>& hidden_layers) {
+        std::vector<int> full;
+        full.push_back(input_size);
+        for (int h : hidden_layers) full.push_back(h);
+        full.push_back(1);
+
         for (auto& g : pop_.individuals_) {
-            for (int h = 0; h < hidden_size; ++h)
-                for (int i = 0; i < input_size; ++i)
-                    g.genes[h * input_size + i] = hid_dist(rng_);
-            int ho = input_size * hidden_size + hidden_size;
-            int out_size = static_cast<int>((g.genes.size() - ho - hidden_size) / hidden_size);
-            if (out_size < 1) out_size = 1;
-            for (int o = 0; o < out_size; ++o)
-                for (int h = 0; h < hidden_size; ++h)
-                    g.genes[ho + o * hidden_size + h] = out_dist(rng_);
+            size_t offset = 0;
+            for (size_t l = 0; l + 1 < full.size(); ++l) {
+                int fan_in = full[l];
+                int fan_out = full[l + 1];
+                bool is_output = (l + 2 == full.size());
+                float sigma = std::sqrt(2.0f / static_cast<float>(fan_in));
+                std::normal_distribution<float> dist(0.0f, sigma);
+                for (int o = 0; o < fan_out; ++o)
+                    for (int i = 0; i < fan_in; ++i)
+                        g.genes[offset + o * fan_in + i] = dist(rng_);
+                if (!is_output) {
+                    for (int o = 0; o < fan_out; ++o)
+                        g.genes[offset + fan_in * fan_out + o] = 0.0f;
+                }
+                offset += static_cast<size_t>(fan_in) * fan_out + fan_out;
+            }
         }
     }
 };

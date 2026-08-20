@@ -172,4 +172,4 @@ private:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Othello, 64, 16, 60)
+REGISTER_GAME(Othello, 64, {16}, 60)

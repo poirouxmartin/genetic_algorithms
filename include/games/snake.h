@@ -171,4 +171,4 @@ private:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Snake, 11, 16, 200)
+REGISTER_GAME(Snake, 11, {16}, 200)

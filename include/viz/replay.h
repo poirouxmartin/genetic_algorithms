@@ -27,7 +27,7 @@ inline ReplayData capture_replay(
     const ga::Genome& genome,
     const std::function<std::unique_ptr<games::GameInterface>()>& factory,
     const std::string& game_name,
-    size_t input_size, size_t hidden_size,
+    size_t input_size, const std::vector<int>& hidden_layers,
     int max_steps)
 {
     ReplayData replay;
@@ -41,7 +41,7 @@ inline ReplayData capture_replay(
     int steps = 0;
 
     if (scoring) {
-        games::ScoringNetwork sn(input_size, hidden_size);
+        games::ScoringNetwork sn(input_size, hidden_layers);
         while (!game->is_done() && steps < max_steps) {
             ReplayFrame frame;
             game->get_state(state.data());
@@ -69,7 +69,7 @@ inline ReplayData capture_replay(
             steps++;
         }
     } else {
-        games::PolicyNetwork pn(input_size, hidden_size, game->action_space());
+        games::PolicyNetwork pn(input_size, hidden_layers, game->action_space());
         while (!game->is_done() && steps < max_steps) {
             ReplayFrame frame;
             game->get_state(state.data());

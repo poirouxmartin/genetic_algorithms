@@ -211,7 +211,7 @@ public:
 
     void render_sim(const ga::GAResult& result, const std::string& game_name, int gen, int max_gen,
                     bool is_running, const float* nn_genes = nullptr, size_t input_size = 0,
-                    size_t hidden_size = 0, size_t output_size = 0, const std::string& game_state = "",
+                    const std::vector<int>& hidden_layers = {}, size_t output_size = 0, const std::string& game_state = "",
                     const games::GameInterface* game_obj = nullptr) {
         if (!initialized_) return;
         SDL_GetWindowSize(window_, &width_, &height_);
@@ -229,7 +229,7 @@ public:
         draw_chart(result.fitness_history, result.avg_history,
                    margin, header_h + 4, total_w, chart_h);
 
-        bool has_nn = nn_genes && input_size > 0 && hidden_size > 0 && output_size > 0;
+        bool has_nn = nn_genes && input_size > 0 && !hidden_layers.empty() && output_size > 0;
         bool has_game = !game_state.empty();
         int col_w;
 
@@ -245,7 +245,7 @@ public:
             } else {
                 draw_game_panel(game_state, margin + col_w + margin, bottom_y, col_w, bottom_h);
             }
-            draw_nn(nn_genes, input_size, hidden_size, output_size,
+            draw_nn(nn_genes, input_size, hidden_layers, output_size,
                     margin + (col_w + margin) * 2, bottom_y, col_w, bottom_h);
         } else if (has_game) {
             col_w = (total_w - margin) / 2;
@@ -262,7 +262,7 @@ public:
         } else if (has_nn) {
             col_w = (total_w - margin) / 2;
             draw_stats(result, margin, bottom_y, col_w, bottom_h);
-            draw_nn(nn_genes, input_size, hidden_size, output_size,
+            draw_nn(nn_genes, input_size, hidden_layers, output_size,
                     margin + col_w + margin, bottom_y, col_w, bottom_h);
         } else {
             draw_stats(result, margin, bottom_y, total_w / 2, bottom_h);
@@ -782,7 +782,7 @@ private:
         }
     }
 
-    void draw_nn(const float* genes, size_t in, size_t hid, size_t out,
+    void draw_nn(const float* genes, size_t in, const std::vector<int>& hidden_layers, size_t out,
                  int sx, int sy, int sw, int sh) {
         fill_rect(sx, sy, sw, sh, COL_PANEL);
         draw_rect_outline(sx, sy, sw, sh, COL_BORDER);
@@ -791,29 +791,38 @@ private:
         int mx2 = sx + 40, my2 = sy + 8 + ch() + 8;
         int mw = sw - 80, mh = sh - 16 - ch() - 8;
         auto node_y = [&](int ls, int idx) { return my2 + mh / 2 + (idx - ls / 2) * 22; };
-        int in_x = mx2, hid_x = mx2 + mw / 2, out_x = mx2 + mw;
 
-        for (size_t h = 0; h < hid; ++h)
-            for (size_t i = 0; i < in; ++i) {
-                float w = genes[h * in + i];
-                Uint8 r = w > 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
-                Uint8 g = w < 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
-                Uint8 a = (Uint8)std::min(255.0f, 20.0f + std::abs(w) * 80.0f);
-                SDL_SetRenderDrawColor(renderer_, r, g, 0, a);
-                SDL_RenderDrawLine(renderer_, in_x + 4, node_y((int)in, (int)i), hid_x - 4, node_y((int)hid, (int)h));
-            }
+        // Build layer list: [in, h0, h1, ..., hn, out]
+        std::vector<int> all;
+        all.push_back(static_cast<int>(in));
+        for (int h : hidden_layers) all.push_back(h);
+        all.push_back(static_cast<int>(out));
+        int n_layers = static_cast<int>(all.size());
 
-        size_t ho = in * hid + hid;
-        for (size_t o = 0; o < out; ++o)
-            for (size_t h = 0; h < hid; ++h) {
-                float w = genes[ho + o * hid + h];
-                Uint8 r = w > 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
-                Uint8 g = w < 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
-                Uint8 a = (Uint8)std::min(255.0f, 20.0f + std::abs(w) * 80.0f);
-                SDL_SetRenderDrawColor(renderer_, r, g, 0, a);
-                SDL_RenderDrawLine(renderer_, hid_x + 4, node_y((int)hid, (int)h), out_x - 4, node_y((int)out, (int)o));
-            }
+        // Distribute columns evenly across the panel width
+        std::vector<int> col_x(n_layers);
+        for (int c = 0; c < n_layers; ++c)
+            col_x[c] = mx2 + static_cast<int>(mw * c) / (n_layers - 1);
 
+        // Draw connections between consecutive layers
+        size_t gene_off = 0;
+        for (int l = 0; l < n_layers - 1; ++l) {
+            int fan_in = all[l];
+            int fan_out = all[l + 1];
+            for (int o = 0; o < fan_out; ++o)
+                for (int i = 0; i < fan_in; ++i) {
+                    float w = genes[gene_off + o * fan_in + i];
+                    Uint8 r = w > 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
+                    Uint8 g = w < 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
+                    Uint8 a = (Uint8)std::min(255.0f, 20.0f + std::abs(w) * 80.0f);
+                    SDL_SetRenderDrawColor(renderer_, r, g, 0, a);
+                    SDL_RenderDrawLine(renderer_, col_x[l] + 4, node_y(all[l], i),
+                                       col_x[l + 1] - 4, node_y(all[l + 1], o));
+                }
+            gene_off += fan_in * fan_out + fan_out; // weights + biases
+        }
+
+        // Draw nodes (skip output layer bias offsets since they're at the end of genome)
         auto draw_node = [&](int nx, int ny, float bias, const char* label) {
             Uint8 r = (Uint8)(bias > 0 ? 80 : 140);
             Uint8 b2 = (Uint8)(bias < 0 ? 180 : std::min(255.0f, 80.0f + std::abs(bias) * 80.0f));
@@ -821,18 +830,45 @@ private:
             draw_text(label, nx + 8, ny - ch() / 2, COL_DIM);
         };
 
-        size_t hb = in * hid;
-        for (size_t i = 0; i < in; ++i)
-            draw_node(in_x, node_y((int)in, (int)i), 0, ("i" + std::to_string(i)).c_str());
-        for (size_t h = 0; h < hid; ++h)
-            draw_node(hid_x, node_y((int)hid, (int)h), genes[hb + h], ("h" + std::to_string(h)).c_str());
-        size_t ob = in * hid + hid + hid * out;
-        for (size_t o = 0; o < out; ++o)
-            draw_node(out_x, node_y((int)out, (int)o), genes[ob + o], ("o" + std::to_string(o)).c_str());
+        // Recompute gene offsets for bias access
+        gene_off = 0;
+        for (int l = 0; l < n_layers; ++l) {
+            if (l > 0) {
+                int prev = all[l - 1];
+                gene_off += prev * all[l] + all[l]; // skip prev weights+biases
+            }
+            if (l < n_layers - 1) {
+                // Bias offset for layer l+1 starts after weights
+                // But we want to draw the bias of the current layer's output neurons
+                // For hidden layers, bias is at gene_off (weights for this pair) + fan_in*fan_out + neuron_idx
+            }
+            int ls = all[l];
+            for (int n = 0; n < ls; ++n) {
+                float bias = 0.0f;
+                if (l > 0) {
+                    int prev = all[l - 1];
+                    size_t bias_start = 0;
+                    // Walk genome to find bias offset for this layer
+                    size_t off = 0;
+                    for (int k = 0; k < l - 1; ++k) {
+                        off += all[k] * all[k + 1] + all[k + 1];
+                    }
+                    bias_start = off + prev * all[l];
+                    bias = genes[bias_start + n];
+                }
+                const char* prefix = (l == 0) ? "i" : (l == n_layers - 1) ? "o" : "h";
+                std::string label = prefix + std::to_string(n);
+                draw_node(col_x[l], node_y(ls, n), bias, label.c_str());
+            }
+        }
 
-        draw_text("IN", in_x - 5, my2 - 15, COL_TEAL);
-        draw_text("HIDDEN", hid_x - 15, my2 - 15, COL_GOLD);
-        draw_text("OUT", out_x - 5, my2 - 15, COL_RED);
+        // Column labels
+        draw_text("IN", col_x[0] - 5, my2 - 15, COL_TEAL);
+        if (n_layers > 2) {
+            std::string hl = "HIDDEN(" + std::to_string(hidden_layers.size()) + "L)";
+            draw_text(hl.c_str(), col_x[1] - 20, my2 - 15, COL_GOLD);
+        }
+        draw_text("OUT", col_x[n_layers - 1] - 5, my2 - 15, COL_RED);
     }
 
     void draw_game_state(const std::string& state, int x, int y, int w, int h) {
@@ -961,7 +997,7 @@ public:
     int consume_genome_click() { return -1; }
     bool render_config(int&, const std::vector<GameConfig>&, std::vector<Slider>&, bool&) { return false; }
     void render_sim(const ga::GAResult&, const std::string&, int, int, bool, const float* = nullptr,
-                    size_t = 0, size_t = 0, size_t = 0, const std::string& = "",
+                    size_t = 0, const std::vector<int>& = {}, size_t = 0, const std::string& = "",
                     const games::GameInterface* = nullptr) {}
     void render_watch(const std::string&, const std::string&, int, int, float, float,
                       int, int, float, const float* = nullptr,

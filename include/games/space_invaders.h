@@ -171,4 +171,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(SpaceInvaders, 5, 10, 500)
+REGISTER_GAME(SpaceInvaders, 5, {10}, 500)

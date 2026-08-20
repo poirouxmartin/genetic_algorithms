@@ -186,4 +186,4 @@ private:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(Pong, 8, 12, 500)
+REGISTER_GAME(Pong, 8, {12}, 500)

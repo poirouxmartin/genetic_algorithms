@@ -314,4 +314,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Game2048, "2048", 20, 16, 2000)
+REGISTER_GAME_DISPLAY(Game2048, "2048", 20, {16}, 2000)
