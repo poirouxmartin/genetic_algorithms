@@ -202,11 +202,11 @@ int main(int argc, char* argv[]) {
         std::vector<viz::GUI::Slider> sliders = {
             {"Population",    &pop_size,    50, 2000, 50},
             {"Generations",   &gens,        50, 2000, 50},
-            {"Mutation Rate", &mut_rate,    0.01f, 1.0f, 0.01f},
-            {"Mutation Sigma",&mut_sigma,   0.01f, 2.0f, 0.01f},
+            {"Mutation Rate", &mut_rate,    0.001f, 1.0f, 0.001f, true},
+            {"Mutation Sigma",&mut_sigma,   0.01f, 5.0f, 0.01f, true},
             {"Crossover Rate",&cross_rate,  0.1f, 1.0f, 0.05f},
             {"Tournament",    &tourney,     2, 10, 1},
-            {"Elitism",       &elitism,     0.0f, 0.2f, 0.01f},
+            {"Elitism",       &elitism,     0.001f, 0.5f, 0.001f, true},
         };
 
         bool run_clicked = false;
@@ -309,12 +309,12 @@ int main(int argc, char* argv[]) {
         std::vector<viz::GUI::Slider> sliders = {
             {"Population",     &pop_size,     50, 2000, 50},
             {"Generations",    &gens,         50, 5000, 50},
-            {"Mutation Rate",  &mut_rate,     0.01f, 1.0f, 0.01f},
-            {"Mutation Sigma", &mut_sigma,    0.01f, 2.0f, 0.01f},
+            {"Mutation Rate",  &mut_rate,     0.001f, 1.0f, 0.001f, true},
+            {"Mutation Sigma", &mut_sigma,    0.01f, 5.0f, 0.01f, true},
             {"Crossover Rate", &cross_rate,   0.1f, 1.0f, 0.05f},
             {"Tournament",     &tourney,      2, 10, 1},
-            {"Elitism",        &elitism,      0.0f, 0.2f, 0.01f},
-            {"L2 Weight Decay",&l2_lambda,    0.0f, 0.01f, 0.0001f},
+            {"Elitism",        &elitism,      0.001f, 0.5f, 0.001f, true},
+            {"L2 Weight Decay",&l2_lambda,    0.00001f, 0.1f, 0.00001f, true},
         };
 
         while (!gui.should_close()) {
@@ -457,20 +457,29 @@ int main(int argc, char* argv[]) {
                         sim_running = false;
                         break;
                     } else {
-                        if (action == viz::GUI::Action::Prev && !watch_roster.empty()) {
-                            watch_idx = (watch_idx > 0) ? watch_idx - 1 : static_cast<int>(watch_roster.size()) - 1;
+                        int gc_count = static_cast<int>(watch_roster.size());
+                        auto reset_watch = [&]() {
                             watch_game = gc.factory();
                             watch_game->reset();
                             watch_step = 0;
+                        };
+
+                        if (action == viz::GUI::Action::Prev && gc_count > 0) {
+                            watch_idx = (watch_idx > 0) ? watch_idx - 1 : gc_count - 1;
+                            reset_watch();
                         }
-                        if (action == viz::GUI::Action::Next && !watch_roster.empty()) {
-                            watch_idx = (watch_idx + 1) % static_cast<int>(watch_roster.size());
-                            watch_game = gc.factory();
-                            watch_game->reset();
-                            watch_step = 0;
+                        if (action == viz::GUI::Action::Next && gc_count > 0) {
+                            watch_idx = (watch_idx + 1) % gc_count;
+                            reset_watch();
                         }
 
-                        if (watch_step < gc.max_steps && !watch_game->is_done() && !watch_roster.empty()) {
+                        int click = gui.consume_genome_click();
+                        if (click >= 0 && click < gc_count && click != watch_idx) {
+                            watch_idx = click;
+                            reset_watch();
+                        }
+
+                        if (watch_step < gc.max_steps && !watch_game->is_done() && gc_count > 0) {
                             const auto& best = watch_roster[static_cast<size_t>(watch_idx)];
                             if (!best.genes.empty()) {
                                 std::vector<float> st(gc.input_size);
@@ -500,11 +509,14 @@ int main(int argc, char* argv[]) {
                                 watch_step++;
                             }
                         }
+                        std::vector<float> fitnesses(watch_roster.size());
+                        for (size_t i = 0; i < watch_roster.size(); ++i)
+                            fitnesses[i] = watch_roster[i].fitness;
                         float wf = watch_roster.empty() ? 0.0f : watch_roster[static_cast<size_t>(watch_idx)].fitness;
                         gui.render_watch(watch_game->render_state(), gc.display_name,
                                          watch_step, gc.max_steps, watch_game->fitness(),
                                          result.best_fitness, watch_idx,
-                                         static_cast<int>(watch_roster.size()), wf,
+                                         gc_count, wf, fitnesses.data(),
                                          watch_game.get());
                     }
                 } else {

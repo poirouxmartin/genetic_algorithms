@@ -38,6 +38,7 @@ public:
         float* value;
         float min_val, max_val;
         float step;
+        bool log_scale = false;
     };
 
 private:
@@ -70,6 +71,10 @@ private:
     Button btn_prev_{};
     Button btn_next_{};
 
+    int watch_scroll_ = 0;
+    int selected_watch_ = 0;
+    int pending_genome_click_ = -1;
+
 public:
     GUI(int w = 1200, int h = 800) : width_(w), height_(h) {}
     ~GUI() { cleanup(); }
@@ -99,6 +104,7 @@ public:
 
     bool should_close() { return quit_ || !initialized_; }
     Action consume_action() { Action a = pending_action_; pending_action_ = Action::None; return a; }
+    int consume_genome_click() { int c = pending_genome_click_; pending_genome_click_ = -1; return c; }
 
     bool render_config(int& game_idx, const std::vector<GameConfig>& configs,
                        std::vector<Slider>& sliders, bool& run_clicked) {
@@ -141,8 +147,15 @@ public:
                     int sx = 220, sw = width_ - 260;
                     if (mx >= sx && mx <= sx + sw && my >= sy && my <= sy + 28) {
                         float ratio = static_cast<float>(mx - sx) / sw;
-                        float nv = sliders[i].min_val + ratio * (sliders[i].max_val - sliders[i].min_val);
-                        nv = std::round(nv / sliders[i].step) * sliders[i].step;
+                        ratio = std::clamp(ratio, 0.0f, 1.0f);
+                        float nv;
+                        if (sliders[i].log_scale && sliders[i].min_val > 0.0f) {
+                            nv = sliders[i].min_val * std::pow(sliders[i].max_val / sliders[i].min_val, ratio);
+                            nv = std::round(nv / sliders[i].step) * sliders[i].step;
+                        } else {
+                            nv = sliders[i].min_val + ratio * (sliders[i].max_val - sliders[i].min_val);
+                            nv = std::round(nv / sliders[i].step) * sliders[i].step;
+                        }
                         *sliders[i].value = std::clamp(nv, sliders[i].min_val, sliders[i].max_val);
                     }
                 }
@@ -155,9 +168,16 @@ public:
                 for (size_t i = 0; i < sliders.size(); ++i) {
                     int sy = y_start + static_cast<int>(i) * slider_h;
                     if (my >= sy && my <= sy + 28 && mx >= 220) {
-                        *sliders[i].value = std::clamp(
-                            *sliders[i].value + e.wheel.y * sliders[i].step,
-                            sliders[i].min_val, sliders[i].max_val);
+                        if (sliders[i].log_scale && sliders[i].min_val > 0.0f) {
+                            float factor = std::pow(10.0f, e.wheel.y * 0.2f);
+                            float nv = *sliders[i].value * factor;
+                            nv = std::round(nv / sliders[i].step) * sliders[i].step;
+                            *sliders[i].value = std::clamp(nv, sliders[i].min_val, sliders[i].max_val);
+                        } else {
+                            *sliders[i].value = std::clamp(
+                                *sliders[i].value + e.wheel.y * sliders[i].step,
+                                sliders[i].min_val, sliders[i].max_val);
+                        }
                         break;
                     }
                 }
@@ -170,10 +190,16 @@ public:
             draw_text(sliders[i].label, 20, sy + 4, COL_TEXT);
             fill_rect(sx, sy + 4, sw, 14, COL_PANEL);
             draw_rect_outline(sx, sy + 4, sw, 14, COL_BORDER);
-            float ratio = (*sliders[i].value - sliders[i].min_val) / (sliders[i].max_val - sliders[i].min_val);
+            float ratio;
+            if (sliders[i].log_scale && sliders[i].min_val > 0.0f && sliders[i].max_val > sliders[i].min_val) {
+                ratio = std::log(*sliders[i].value / sliders[i].min_val) / std::log(sliders[i].max_val / sliders[i].min_val);
+            } else {
+                ratio = (*sliders[i].value - sliders[i].min_val) / (sliders[i].max_val - sliders[i].min_val);
+            }
+            ratio = std::clamp(ratio, 0.0f, 1.0f);
             int thumb_x = sx + static_cast<int>(ratio * sw);
             fill_rect(thumb_x - 3, sy, 6, 22, COL_ACCENT);
-            draw_text(fmt(*sliders[i].value, (sliders[i].step < 1.0f ? 2 : 0)), thumb_x + 10, sy, COL_TEXT);
+            draw_text(fmt(*sliders[i].value, (sliders[i].step < 1.0f ? 4 : 0)), thumb_x + 10, sy, COL_TEXT);
         }
 
         int btn_y = y_start + static_cast<int>(sliders.size()) * slider_h + 20;
@@ -248,11 +274,51 @@ public:
     void render_watch(const std::string& game_state, const std::string& game_name,
                       int step, int max_steps, float fitness, float best_fitness,
                       int genome_idx, int genome_count, float genome_fitness,
+                      const float* genome_fitnesses = nullptr,
                       const games::GameInterface* game_obj = nullptr) {
         if (!initialized_) return;
         SDL_GetWindowSize(window_, &width_, &height_);
         clear_bg();
-        process_events();
+        pending_action_ = Action::None;
+        pending_genome_click_ = -1;
+
+        int list_w = 220;
+        int list_x = 15;
+        int list_y = 66;
+        int list_h = height_ - 66 - 52;
+        int item_h = ch() + 6;
+        int header_off = ch() + 12;
+        int visible = std::max(1, (list_h - header_off) / item_h);
+
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) { quit_ = true; return; }
+            if (e.type == SDL_KEYDOWN) {
+                if (e.key.keysym.sym == SDLK_ESCAPE) { pending_action_ = Action::Menu; return; }
+                if (e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_a)
+                    pending_action_ = Action::Prev;
+                if (e.key.keysym.sym == SDLK_RIGHT || e.key.keysym.sym == SDLK_d)
+                    pending_action_ = Action::Next;
+            }
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                int mx = e.button.x, my = e.button.y;
+                if (check_btn(btn_menu_, mx, my)) pending_action_ = Action::Menu;
+                else if (check_btn(btn_a_, mx, my)) pending_action_ = Action::PauseResume;
+                else if (check_btn(btn_prev_, mx, my)) pending_action_ = Action::Prev;
+                else if (check_btn(btn_next_, mx, my)) pending_action_ = Action::Next;
+                else if (mx >= list_x && mx < list_x + list_w && my >= list_y + header_off && my < list_y + list_h) {
+                    int clicked = watch_scroll_ + (my - list_y - header_off) / item_h;
+                    if (clicked >= 0 && clicked < genome_count) pending_genome_click_ = clicked;
+                }
+            }
+            if (e.type == SDL_MOUSEWHEEL) {
+                int mx = 0, my = 0;
+                SDL_GetMouseState(&mx, &my);
+                if (mx >= list_x && mx < list_x + list_w && my >= list_y && my < list_y + list_h) {
+                    watch_scroll_ = std::max(0, std::min(watch_scroll_ - e.wheel.y, std::max(0, genome_count - visible)));
+                }
+            }
+        }
 
         fill_rect(15, 8, width_ - 30, 50, COL_PANEL);
         draw_rect_outline(15, 8, width_ - 30, 50, COL_BORDER);
@@ -261,20 +327,56 @@ public:
                   + "    Fitness: " + fmt(fitness)
                   + "    Best: " + fmt(best_fitness), 25, 32, COL_TEAL);
 
-        int info_y = 62;
-        fill_rect(15, info_y, width_ - 30, 24, COL_PANEL);
-        draw_rect_outline(15, info_y, width_ - 30, 24, COL_BORDER);
-        draw_text("Genome: " + std::to_string(genome_idx + 1) + " / " + std::to_string(genome_count)
-                  + "    Fitness: " + fmt(genome_fitness), 25, info_y + 4, COL_GOLD);
+        fill_rect(list_x, list_y, list_w, list_h, COL_PANEL);
+        draw_rect_outline(list_x, list_y, list_w, list_h, COL_BORDER);
+        draw_text("Top " + std::to_string(genome_count), list_x + 10, list_y + 6, COL_GOLD);
 
-        int board_y = 92, board_h = height_ - 92 - 60;
-        fill_rect(15, board_y, width_ - 30, board_h, COL_BG);
-        draw_rect_outline(15, board_y, width_ - 30, board_h, COL_BORDER);
+        if (genome_idx >= 0 && genome_idx < genome_count) selected_watch_ = genome_idx;
+        if (selected_watch_ >= genome_count) selected_watch_ = std::max(0, genome_count - 1);
+        if (selected_watch_ < watch_scroll_) watch_scroll_ = selected_watch_;
+        if (selected_watch_ >= watch_scroll_ + visible) watch_scroll_ = selected_watch_ - visible + 1;
+
+        SDL_Rect clip = {list_x, list_y + header_off, list_w, list_h - header_off};
+        SDL_RenderSetClipRect(renderer_, &clip);
+
+        float max_f = 1.0f;
+        if (genome_fitnesses) {
+            for (int i = 0; i < genome_count; ++i)
+                max_f = std::max(max_f, genome_fitnesses[i]);
+        }
+
+        for (int i = watch_scroll_; i < std::min(genome_count, watch_scroll_ + visible); ++i) {
+            int iy = list_y + header_off + (i - watch_scroll_) * item_h;
+            bool sel = (i == selected_watch_);
+            if (sel) fill_rect(list_x + 2, iy, list_w - 4, item_h - 1, COL_ACCENT);
+
+            std::string label = "#" + std::to_string(i + 1);
+            draw_text(label, list_x + 8, iy + 2, sel ? COL_BG : COL_DIM);
+
+            if (genome_fitnesses) {
+                float f = genome_fitnesses[i];
+                int bar_x = list_x + 50, bar_w = 70;
+                int filled = std::max(1, (int)(f / max_f * bar_w));
+                fill_rect(bar_x, iy + 3, bar_w, ch() - 2, COL_BG);
+                fill_rect(bar_x, iy + 3, filled, ch() - 2, sel ? COL_BG : COL_TEAL);
+                draw_text(fmt(f), bar_x + bar_w + 6, iy + 2, sel ? COL_BG : COL_TEXT);
+            } else {
+                draw_text("---", list_x + 50, iy + 2, sel ? COL_BG : COL_DIM);
+            }
+        }
+        SDL_RenderSetClipRect(renderer_, nullptr);
+
+        int game_x = list_x + list_w + 8;
+        int game_w = width_ - game_x - 15;
+        int game_y = list_y;
+        int game_h = list_h;
+        fill_rect(game_x, game_y, game_w, game_h, COL_BG);
+        draw_rect_outline(game_x, game_y, game_w, game_h, COL_BORDER);
         if (game_obj && game_obj->has_sdl_render()) {
-            draw_text("Game", 25, board_y + 4, COL_GOLD);
-            game_obj->render_sdl(renderer_, 25, board_y + 10 + ch(), width_ - 50, board_h - 20 - ch());
+            draw_text("Game", game_x + 10, game_y + 6, COL_GOLD);
+            game_obj->render_sdl(renderer_, game_x + 10, game_y + 10 + ch(), game_w - 20, game_h - 20 - ch());
         } else {
-            draw_game_state(game_state, 25, board_y + 10, width_ - 50, board_h - 20);
+            draw_game_state(game_state, game_x + 10, game_y + 10, game_w - 20, game_h - 20);
         }
 
         int bar_y = height_ - 52;
@@ -851,17 +953,18 @@ class GUI {
 public:
     enum class Action { None, PauseResume, Stop, Watch, Back, Menu, Prev, Next };
 
-    struct Slider { const char* label; float* value; float min_val, max_val, step; };
+    struct Slider { const char* label; float* value; float min_val, max_val, step; bool log_scale = false; };
     bool init() { return false; }
     void cleanup() {}
     bool should_close() { return true; }
     Action consume_action() { return Action::None; }
+    int consume_genome_click() { return -1; }
     bool render_config(int&, const std::vector<GameConfig>&, std::vector<Slider>&, bool&) { return false; }
     void render_sim(const ga::GAResult&, const std::string&, int, int, bool, const float* = nullptr,
                     size_t = 0, size_t = 0, size_t = 0, const std::string& = "",
                     const games::GameInterface* = nullptr) {}
     void render_watch(const std::string&, const std::string&, int, int, float, float,
-                      int, int, float,
+                      int, int, float, const float* = nullptr,
                       const games::GameInterface* = nullptr) {}
     void render_benchmark(const std::vector<std::pair<std::string, ga::GAResult>>&) {}
     void render_replay(const ReplayData&, int, float) {}
