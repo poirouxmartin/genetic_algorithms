@@ -418,4 +418,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME(CarRace, 13, 16, 400)
+REGISTER_GAME_SYM(CarRace, 13, 16, 400, {0,6}, {1,5}, {2,4})

@@ -9,6 +9,7 @@
 #include <functional>
 #include <chrono>
 #include <vector>
+#include <cmath>
 
 namespace ga {
 
@@ -25,6 +26,10 @@ struct GAConfig {
     int max_generations = 1000;
     bool adaptive_mutation = true;
     bool parallel_eval = true;
+    std::vector<std::pair<int,int>> symmetry_pairs;
+    float l2_lambda = 0.0f; // L2 weight penalty: fitness -= l2_lambda * sum(w^2)
+    int input_size = 0;     // for He init: sigma = sqrt(2/input_size) per layer
+    int hidden_size = 0;
 };
 
 struct GAResult {
@@ -54,6 +59,11 @@ public:
           start_time_(std::chrono::high_resolution_clock::now()) {
 
         pop_ = Population(cfg.population_size, cfg.gene_count, cfg.min_gene, cfg.max_gene);
+
+        if (cfg.input_size > 0 && cfg.hidden_size > 0) {
+            he_init(cfg.input_size, cfg.hidden_size);
+        }
+
         selection_ = std::make_unique<TournamentSelection>(cfg.tournament_size);
         crossover_ = std::make_unique<UniformCrossover>(cfg.crossover_rate);
 
@@ -89,20 +99,25 @@ public:
         pop_.evaluate_batch(fitness_fn);
 
         float best_fit = -1e30f;
+        size_t best_idx = 0;
         float sum = 0.0f;
         for (size_t i = 0; i < pop_.individuals_.size(); ++i) {
             float f = pop_.individuals_[i].fitness;
             sum += f;
-            if (f > best_fit) best_fit = f;
+            if (f > best_fit) { best_fit = f; best_idx = i; }
         }
         float avg = sum / static_cast<float>(pop_.individuals_.size());
         float div = pop_.diversity();
+
+        if (best_fit > result.best_fitness || result.generations_run == 0) {
+            result.best_genome = pop_.individuals_[best_idx];
+            result.best_fitness = best_fit;
+        }
 
         result.fitness_history.push_back(best_fit);
         result.avg_history.push_back(avg);
         result.diversity_history.push_back(div);
         result.generations_run = gen + 1;
-        result.best_fitness = best_fit;
         result.avg_fitness = avg;
 
         pop_.prev_best_ = best_fit;
@@ -259,6 +274,18 @@ private:
 
             mutation_->mutate(pop_.buffer_[i], rng_);
             if (i + 1 < pop_size) mutation_->mutate(pop_.buffer_[i + 1], rng_);
+
+            if (!config_.symmetry_pairs.empty()) {
+                repair_symmetry(pop_.buffer_[i]);
+                if (i + 1 < pop_size) repair_symmetry(pop_.buffer_[i + 1]);
+            }
+        }
+    }
+
+    void repair_symmetry(Genome& g) const {
+        for (auto [a, b] : config_.symmetry_pairs) {
+            if (a < static_cast<int>(g.genes.size()) && b < static_cast<int>(g.genes.size()))
+                g.genes[b] = g.genes[a];
         }
     }
 
@@ -268,6 +295,22 @@ private:
             size_t idx = std::uniform_int_distribution<size_t>(0, pop_.size() - 1)(rng_);
             pop_.buffer_[idx].randomize(config_.min_gene, config_.max_gene);
             pop_.buffer_[idx].fitness = 0.0f;
+            if (!config_.symmetry_pairs.empty()) repair_symmetry(pop_.buffer_[idx]);
+        }
+    }
+
+    void he_init(int input_size, int hidden_size) {
+        std::normal_distribution<float> hid_dist(0.0f, std::sqrt(2.0f / static_cast<float>(input_size)));
+        std::normal_distribution<float> out_dist(0.0f, std::sqrt(2.0f / static_cast<float>(hidden_size)));
+        for (auto& g : pop_.individuals_) {
+            for (int h = 0; h < hidden_size; ++h)
+                for (int i = 0; i < input_size; ++i)
+                    g.genes[h * input_size + i] = hid_dist(rng_);
+            int ho = input_size * hidden_size;
+            int out_size = static_cast<int>((g.genes.size() - ho - hidden_size) / hidden_size);
+            for (int o = 0; o < out_size; ++o)
+                for (int h = 0; h < hidden_size; ++h)
+                    g.genes[ho + o * hidden_size + h] = out_dist(rng_);
         }
     }
 };

@@ -31,7 +31,8 @@
 #include <functional>
 #include <iomanip>
 
-ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300) {
+ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300,
+                         int input_size = 0, int hidden_size = 0) {
     ga::GAConfig cfg;
     cfg.population_size = pop;
     cfg.gene_count = genome_size;
@@ -45,11 +46,25 @@ ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300) {
     cfg.max_generations = gens;
     cfg.adaptive_mutation = true;
     cfg.parallel_eval = true;
+    cfg.input_size = input_size;
+    cfg.hidden_size = hidden_size;
     return cfg;
 }
 
 bool matches_game(const GameConfig& gc, const std::string& name) {
     return gc.name == name || gc.display_name == name;
+}
+
+void apply_symmetry(ga::GAConfig& cfg, const GameConfig& gc, bool scoring) {
+    if (!gc.input_symmetry.empty() && !scoring) {
+        size_t in = gc.input_size, hid = gc.hidden_size;
+        for (auto [i, j] : gc.input_symmetry) {
+            for (size_t h = 0; h < hid; ++h)
+                cfg.symmetry_pairs.emplace_back(
+                    static_cast<int>(h * in + i),
+                    static_cast<int>(h * in + j));
+        }
+    }
 }
 
 ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
@@ -63,7 +78,9 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
         genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_size, game->action_space());
     }
 
-    auto cfg = make_config(genome_size, 300, 300);
+    auto cfg = make_config(genome_size, 300, 300,
+                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+    apply_symmetry(cfg, gc, scoring);
 
     viz::TUI tui(80, 30);
     tui.set_enabled(show_tui);
@@ -209,12 +226,15 @@ int main(int argc, char* argv[]) {
 
                     auto cfg = make_config(genome_size,
                                            static_cast<size_t>(pop_size),
-                                           static_cast<int>(gens));
+                                           static_cast<int>(gens),
+                                           static_cast<int>(gc.input_size),
+                                           static_cast<int>(gc.hidden_size));
                     cfg.mutation_rate = mut_rate;
                     cfg.mutation_sigma = mut_sigma;
                     cfg.crossover_rate = cross_rate;
                     cfg.tournament_size = static_cast<int>(tourney);
                     cfg.elitism_ratio = elitism;
+                    apply_symmetry(cfg, gc, scoring);
 
                     ga::GAEngine engine(cfg);
                     auto result = engine.run_batch([&](ga::Genome& g) {
@@ -283,6 +303,7 @@ int main(int argc, char* argv[]) {
         float pop_size = 300.0f, gens = 1000.0f;
         float mut_rate = 0.1f, mut_sigma = 0.2f;
         float cross_rate = 0.85f, tourney = 3.0f, elitism = 0.05f;
+        float l2_lambda = 0.0f;
         int selected_game = game_idx;
 
         std::vector<viz::GUI::Slider> sliders = {
@@ -293,6 +314,7 @@ int main(int argc, char* argv[]) {
             {"Crossover Rate", &cross_rate,   0.1f, 1.0f, 0.05f},
             {"Tournament",     &tourney,      2, 10, 1},
             {"Elitism",        &elitism,      0.0f, 0.2f, 0.01f},
+            {"L2 Weight Decay",&l2_lambda,    0.0f, 0.01f, 0.0001f},
         };
 
         while (!gui.should_close()) {
@@ -328,6 +350,10 @@ int main(int argc, char* argv[]) {
             cfg.max_generations = static_cast<int>(gens);
             cfg.adaptive_mutation = true;
             cfg.parallel_eval = true;
+            cfg.input_size = static_cast<int>(gc.input_size);
+            cfg.hidden_size = static_cast<int>(gc.hidden_size);
+            cfg.l2_lambda = l2_lambda;
+            apply_symmetry(cfg, gc, scoring);
 
             ga::GAEngine engine(cfg);
             int action_space_size = game->action_space();
@@ -370,6 +396,11 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 g.fitness = tls_game->fitness();
+                if (cfg.l2_lambda > 0.0f) {
+                    float l2 = 0.0f;
+                    for (float w : g.genes) l2 += w * w;
+                    g.fitness -= cfg.l2_lambda * l2;
+                }
             };
 
             auto play_best = [&]() -> std::string {
@@ -425,10 +456,10 @@ int main(int argc, char* argv[]) {
                         break;
                     } else {
                         if (watch_step < gc.max_steps && !watch_game->is_done()) {
-                            std::vector<float> st(gc.input_size);
-                            watch_game->get_state(st.data());
-                            const auto& best = engine.population().best();
+                            const auto& best = result.best_genome;
                             if (!best.genes.empty()) {
+                                std::vector<float> st(gc.input_size);
+                                watch_game->get_state(st.data());
                                 if (scoring) {
                                     games::ScoringNetwork sn(gc.input_size, gc.hidden_size);
                                     auto valid = watch_game->get_valid_moves();
@@ -456,7 +487,7 @@ int main(int argc, char* argv[]) {
                         }
                         gui.render_watch(watch_game->render_state(), gc.display_name,
                                          watch_step, gc.max_steps, watch_game->fitness(),
-                                         watch_game.get());
+                                         result.best_fitness, watch_game.get());
                     }
                 } else {
                     if (action == viz::GUI::Action::Menu) {
@@ -476,18 +507,17 @@ int main(int argc, char* argv[]) {
                     if (sim_running && result.generations_run < cfg.max_generations)
                         engine.step(eval_fn, result);
 
-                    const auto& best = engine.population().best();
-                    const float* nn_data = nullptr;
-                    size_t in_s = 0, hid_s = 0, out_s = 0;
-                    if (!best.genes.empty()) {
-                        nn_data = best.genes.data();
-                        in_s = gc.input_size; hid_s = gc.hidden_size;
-                        if (!scoring) out_s = action_space_size;
-                    }
-
                     if (result.generations_run > 0) {
+                        const float* nn_data = nullptr;
+                        size_t in_s = 0, hid_s = 0, out_s = 0;
+                        if (!result.best_genome.genes.empty()) {
+                            nn_data = result.best_genome.genes.data();
+                            in_s = gc.input_size; hid_s = gc.hidden_size;
+                            if (!scoring) out_s = action_space_size;
+                        }
+
                         if (!display_game) { display_game = gc.factory(); display_game->reset(); display_step = 0; }
-                        const auto& best2 = engine.population().best();
+                        const auto& best2 = result.best_genome;
                         if (!best2.genes.empty()) {
                             if (display_game->is_done() || display_step >= gc.max_steps) {
                                 display_game->reset();
@@ -523,11 +553,11 @@ int main(int argc, char* argv[]) {
                             }
                         }
                         game_state = display_game->render_state();
-                    }
 
-                    gui.render_sim(result, gc.display_name, result.generations_run, cfg.max_generations,
-                                   sim_running, nn_data, in_s, hid_s, out_s, game_state,
-                                   display_game.get());
+                        gui.render_sim(result, gc.display_name, result.generations_run, cfg.max_generations,
+                                       sim_running, nn_data, in_s, hid_s, out_s, game_state,
+                                       display_game.get());
+                    }
                 }
             }
         }
@@ -558,7 +588,9 @@ int main(int argc, char* argv[]) {
             else
                 genome_size = games::PolicyNetwork::weight_count(gc.input_size, gc.hidden_size, game->action_space());
 
-            auto cfg = make_config(genome_size, 200, 300);
+            auto cfg = make_config(genome_size, 200, 300,
+                                   static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+            apply_symmetry(cfg, gc, scoring);
             ga::GAEngine engine(cfg);
 
             auto result = engine.run_batch([&](ga::Genome& g) {
@@ -694,7 +726,8 @@ int main(int argc, char* argv[]) {
             icfg.pop_per_island = 75;
             icfg.migration_interval = 20;
             icfg.migration_count = 5;
-            icfg.base_config = make_config(genome_size, 75, 300);
+            icfg.base_config = make_config(genome_size, 75, 300,
+                                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
             icfg.base_config.adaptive_mutation = true;
 
             ga::IslandGAEngine engine(icfg);
@@ -801,7 +834,9 @@ int main(int argc, char* argv[]) {
                 }
 
                 size_t genome_size = games::ScoringNetwork::weight_count(gc.input_size, gc.hidden_size);
-                auto cfg = make_config(genome_size, 300, 300);
+    auto cfg = make_config(genome_size, 300, 300,
+                           static_cast<int>(gc.input_size), static_cast<int>(gc.hidden_size));
+                apply_symmetry(cfg, gc, true);
                 ga::GAEngine engine(cfg);
 
                 std::cout << "Running coevolution " << gc.display_name

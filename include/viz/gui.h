@@ -244,7 +244,7 @@ public:
     }
 
     void render_watch(const std::string& game_state, const std::string& game_name,
-                      int step, int max_steps, float fitness,
+                      int step, int max_steps, float fitness, float best_fitness,
                       const games::GameInterface* game_obj = nullptr) {
         if (!initialized_) return;
         SDL_GetWindowSize(window_, &width_, &height_);
@@ -255,7 +255,8 @@ public:
         draw_rect_outline(15, 8, width_ - 30, 50, COL_BORDER);
         draw_text("Watching: " + game_name, 25, 14, COL_TEXT);
         draw_text("Step: " + std::to_string(step) + " / " + std::to_string(max_steps)
-                  + "    Fitness: " + fmt(fitness), 25, 32, COL_TEAL);
+                  + "    Fitness: " + fmt(fitness)
+                  + "    Best: " + fmt(best_fitness), 25, 32, COL_TEAL);
 
         int board_y = 70, board_h = height_ - 70 - 60;
         fill_rect(15, board_y, width_ - 30, board_h, COL_BG);
@@ -838,7 +839,7 @@ public:
     void render_sim(const ga::GAResult&, const std::string&, int, int, bool, const float* = nullptr,
                     size_t = 0, size_t = 0, size_t = 0, const std::string& = "",
                     const games::GameInterface* = nullptr) {}
-    void render_watch(const std::string&, const std::string&, int, int, float,
+    void render_watch(const std::string&, const std::string&, int, int, float, float,
                       const games::GameInterface* = nullptr) {}
     void render_benchmark(const std::vector<std::pair<std::string, ga::GAResult>>&) {}
     void render_replay(const ReplayData&, int, float) {}

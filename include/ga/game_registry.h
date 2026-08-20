@@ -13,6 +13,7 @@ struct GameConfig {
     size_t hidden_size;
     int max_steps;
     std::function<std::unique_ptr<games::GameInterface>()> factory;
+    std::vector<std::pair<int,int>> input_symmetry;
 };
 
 class GameRegistry {
@@ -42,5 +43,14 @@ struct GameRegistrar {
         static GameRegistrar reg_##ClassName( \
             { #ClassName, DisplayName, InputSz, HiddenSz, MaxSteps, \
               []{ return std::make_unique<games::ClassName>(); } } \
+        ); \
+    }
+
+#define REGISTER_GAME_SYM(ClassName, InputSz, HiddenSz, MaxSteps, ...) \
+    namespace { \
+        static GameRegistrar reg_##ClassName( \
+            { #ClassName, #ClassName, InputSz, HiddenSz, MaxSteps, \
+              []{ return std::make_unique<games::ClassName>(); }, \
+              { __VA_ARGS__ } } \
         ); \
     }
