@@ -14,6 +14,7 @@
 #include "games/space_invaders.h"
 #include "games/tetris.h"
 #include "games/car_race.h"
+#include "games/trackmania.h"
 #include "viz/tui.h"
 #include "viz/replay.h"
 #include "viz/gui.h"
