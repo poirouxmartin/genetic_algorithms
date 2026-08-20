@@ -119,6 +119,15 @@ class TrackMania : public GameInterface {
                         }
                 }
 
+        for (int x = 0; x < MAP_W; ++x) {
+            if (map_[0][x] == GRASS) map_[0][x] = WALL;
+            if (map_[MAP_H-1][x] == GRASS) map_[MAP_H-1][x] = WALL;
+        }
+        for (int y = 0; y < MAP_H; ++y) {
+            if (map_[y][0] == GRASS) map_[y][0] = WALL;
+            if (map_[y][MAP_W-1] == GRASS) map_[y][MAP_W-1] = WALL;
+        }
+
         int fin_y = 10;
         for (int fx = 3; fx <= 7; ++fx)
             if (fin_y >= 0 && fin_y < MAP_H && fx >= 0 && fx < MAP_W)
@@ -232,12 +241,19 @@ public:
         total_distance_ += car_vel_.len();
         max_speed_ = std::max(max_speed_, car_vel_.len());
 
+        Tile new_tile = tile_at(car_pos_.x, car_pos_.y);
+        if (new_tile == WALL) {
+            car_pos_ = car_pos_ - car_vel_;
+            car_vel_ = car_vel_ * 0.2f;
+            return;
+        }
+
         if (car_pos_.x < 0 || car_pos_.x >= WORLD_W || car_pos_.y < 0 || car_pos_.y >= WORLD_H) {
             done_ = true;
             return;
         }
 
-        if (tile == GRASS && cur_speed > 0.5f) {
+        if ((new_tile == GRASS) && cur_speed > 0.5f) {
             car_vel_ = car_vel_ * 0.7f;
         }
 

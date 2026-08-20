@@ -198,6 +198,48 @@ public:
 
     bool has_sdl_render() const override { return true; }
 
+    static void draw_digit(SDL_Renderer* r, int d, int cx, int cy, int sz, SDL_Color col) {
+        static const uint8_t digits[10] = {
+            0x7B, 0x42, 0x7D, 0x63, 0x19,
+            0x39, 0x79, 0x43, 0x7B, 0x7B
+        };
+        static const int glyph[10][15] = {
+            {1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1},
+            {0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1},
+            {1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1},
+            {1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1},
+            {1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1},
+            {1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1},
+            {1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1},
+            {1,1,1, 0,0,1, 0,1,0, 0,1,0, 0,1,0},
+            {1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1},
+            {1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1}
+        };
+        int pw = sz / 3, ph = sz / 5;
+        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+        for (int py = 0; py < 5; ++py)
+            for (int px = 0; px < 3; ++px)
+                if (glyph[d][py * 3 + px]) {
+                    SDL_Rect rect = {cx - sz / 2 + px * pw, cy - sz / 2 + py * ph, pw - 1, ph - 1};
+                    SDL_RenderFillRect(r, &rect);
+                }
+    }
+
+    static void draw_number(SDL_Renderer* r, int val, int cx, int cy, int sz, SDL_Color col) {
+        if (val == 0) return;
+        char buf[16];
+        int len = 0;
+        int tmp = val;
+        while (tmp > 0) { buf[len++] = '0' + tmp % 10; tmp /= 10; }
+        int total_w = len * (sz + 2);
+        int start_x = cx - total_w / 2;
+        for (int i = len - 1; i >= 0; --i) {
+            int d = buf[i] - '0';
+            int dx = start_x + (len - 1 - i) * (sz + 2) + sz / 2;
+            draw_digit(r, d, dx, cy, sz, col);
+        }
+    }
+
     void render_sdl(SDL_Renderer* renderer, int x, int y, int w, int h) const override {
         int cell = std::min(w, h) / SIZE;
         int bw = cell * SIZE;
@@ -234,15 +276,9 @@ public:
                 SDL_RenderFillRect(renderer, &sq);
 
                 if (v > 0) {
-                    std::string s = std::to_string(v);
-                    int text_x = sx + cell / 2 - static_cast<int>(s.size()) * 4;
-                    int text_y = sy + cell / 2 - 6;
-                    SDL_SetRenderDrawColor(renderer, 226, 228, 234, 255);
-                    for (size_t i = 0; i < s.size(); ++i) {
-                        int char_x = text_x + static_cast<int>(i) * 8;
-                        SDL_Rect cr = {char_x, text_y, 7, 13};
-                        SDL_RenderDrawRect(renderer, &cr);
-                    }
+                    SDL_Color col = {226, 228, 234, 255};
+                    if (v >= 128) col = {27, 30, 46, 255};
+                    draw_number(renderer, v, sx + cell / 2, sy + cell / 2, cell / 3, col);
                 }
             }
         }
