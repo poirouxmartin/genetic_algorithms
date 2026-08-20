@@ -42,7 +42,7 @@ ga::GAConfig make_config(size_t genome_size, size_t pop = 300, int gens = 300,
     cfg.mutation_rate = 0.1f;
     cfg.mutation_sigma = 0.2f;
     cfg.elitism_ratio = 0.05f;
-    cfg.tournament_size = 3;
+    cfg.tournament_size = 5;
     cfg.max_generations = gens;
     cfg.adaptive_mutation = true;
     cfg.parallel_eval = true;
@@ -196,7 +196,7 @@ int main(int argc, char* argv[]) {
         float mut_rate = 0.1f;
         float mut_sigma = 0.2f;
         float cross_rate = 0.85f;
-        float tourney = 3.0f;
+        float tourney = 5.0f;
         float elitism = 0.05f;
 
         std::vector<viz::GUI::Slider> sliders = {

@@ -306,8 +306,9 @@ private:
             for (int h = 0; h < hidden_size; ++h)
                 for (int i = 0; i < input_size; ++i)
                     g.genes[h * input_size + i] = hid_dist(rng_);
-            int ho = input_size * hidden_size;
+            int ho = input_size * hidden_size + hidden_size;
             int out_size = static_cast<int>((g.genes.size() - ho - hidden_size) / hidden_size);
+            if (out_size < 1) out_size = 1;
             for (int o = 0; o < out_size; ++o)
                 for (int h = 0; h < hidden_size; ++h)
                     g.genes[ho + o * hidden_size + h] = out_dist(rng_);
