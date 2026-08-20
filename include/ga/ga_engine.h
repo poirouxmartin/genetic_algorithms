@@ -60,7 +60,7 @@ public:
         if (cfg.adaptive_mutation) {
             mutation_ = std::make_unique<AdaptiveMutation>(cfg.mutation_rate, cfg.mutation_sigma);
         } else {
-            mutation_ = std::make_unique<GaussianMutation>(cfg.crossover_rate, cfg.mutation_sigma);
+            mutation_ = std::make_unique<GaussianMutation>(cfg.mutation_rate, cfg.mutation_sigma);
         }
     }
 

@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <random>
+#include <mutex>
 
 namespace games {
 
@@ -13,7 +14,7 @@ class Maze : public GameInterface {
     static constexpr int MAX_STEPS = 500;
 
     static std::array<char, WIDTH * HEIGHT> shared_grid_;
-    static bool grid_initialized_;
+    static std::once_flag grid_init_flag_;
 
     std::array<char, WIDTH * HEIGHT> grid_;
     int player_x_, player_y_;
@@ -28,7 +29,7 @@ public:
     int action_space() const override { return 4; }
 
     void reset() override {
-        if (!grid_initialized_) {
+        std::call_once(grid_init_flag_, [this]() {
             shared_grid_.fill('#');
             auto carve = [&](auto& self, int x, int y) -> void {
                 shared_grid_[y * WIDTH + x] = ' ';
@@ -46,8 +47,7 @@ public:
                 }
             };
             carve(carve, 1, 1);
-            grid_initialized_ = true;
-        }
+        });
         grid_ = shared_grid_;
         player_x_ = 1;
         player_y_ = 1;
@@ -94,7 +94,7 @@ public:
 
     int action_count() const override { return steps_; }
 
-    void get_state(float* state) const {
+    void get_state(float* state) const override {
         state[0] = static_cast<float>(player_x_) / WIDTH;
         state[1] = static_cast<float>(player_y_) / HEIGHT;
         state[2] = static_cast<float>(goal_x_) / WIDTH;
@@ -126,7 +126,7 @@ public:
 };
 
 inline std::array<char, Maze::WIDTH * Maze::HEIGHT> Maze::shared_grid_{};
-inline bool Maze::grid_initialized_ = false;
+inline std::once_flag Maze::grid_init_flag_;
 
 } // namespace games
 

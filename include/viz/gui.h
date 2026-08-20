@@ -671,7 +671,7 @@ private:
 
         for (size_t h = 0; h < hid; ++h)
             for (size_t i = 0; i < in; ++i) {
-                float w = genes[i * hid + h];
+                float w = genes[h * in + i];
                 Uint8 r = w > 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
                 Uint8 g = w < 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
                 Uint8 a = (Uint8)std::min(255.0f, 20.0f + std::abs(w) * 80.0f);
@@ -682,7 +682,7 @@ private:
         size_t ho = in * hid + hid;
         for (size_t o = 0; o < out; ++o)
             for (size_t h = 0; h < hid; ++h) {
-                float w = genes[ho + h * out + o];
+                float w = genes[ho + o * hid + h];
                 Uint8 r = w > 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
                 Uint8 g = w < 0 ? (Uint8)std::min(255.0f, std::abs(w) * 180.0f) : 0;
                 Uint8 a = (Uint8)std::min(255.0f, 20.0f + std::abs(w) * 80.0f);
@@ -702,9 +702,9 @@ private:
             draw_node(in_x, node_y((int)in, (int)i), 0, ("i" + std::to_string(i)).c_str());
         for (size_t h = 0; h < hid; ++h)
             draw_node(hid_x, node_y((int)hid, (int)h), genes[hb + h], ("h" + std::to_string(h)).c_str());
-        size_t ob = in * hid + hid + hid;
+        size_t ob = in * hid + hid + hid * out;
         for (size_t o = 0; o < out; ++o)
-            draw_node(out_x, node_y((int)out, (int)o), genes[ob + out + o], ("o" + std::to_string(o)).c_str());
+            draw_node(out_x, node_y((int)out, (int)o), genes[ob + o], ("o" + std::to_string(o)).c_str());
 
         draw_text("IN", in_x - 5, my2 - 15, COL_TEAL);
         draw_text("HIDDEN", hid_x - 15, my2 - 15, COL_GOLD);

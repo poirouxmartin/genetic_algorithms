@@ -27,7 +27,6 @@ class FlappyBird : public GameInterface {
     int score_;
     int frames_;
     bool done_;
-    int action_count_;
 
 public:
     FlappyBird() { reset(); }
@@ -44,7 +43,6 @@ public:
         score_ = 0;
         frames_ = 0;
         done_ = false;
-        action_count_ = 0;
     }
 
     void step(int action) override {
@@ -53,7 +51,6 @@ public:
 
         if (action == 1) {
             bird_vy_ = JUMP_VEL;
-            action_count_++;
         }
 
         bird_vy_ += GRAVITY;

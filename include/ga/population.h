@@ -15,8 +15,8 @@ class Population {
 public:
     std::vector<Genome> individuals_;
     std::vector<Genome> buffer_;
-    size_t size_;
-    size_t gene_count_;
+    size_t size_ = 0;
+    size_t gene_count_ = 0;
     float best_fitness_ = -1e30f;
     size_t stagnation_ = 0;
     float prev_best_ = -1e30f;

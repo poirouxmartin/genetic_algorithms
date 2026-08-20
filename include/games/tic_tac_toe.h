@@ -63,6 +63,11 @@ public:
 
     int action_count() const override { return moves_; }
 
+    void get_state(float* state) const override {
+        for (int i = 0; i < 9; ++i)
+            state[i] = static_cast<float>(board_[i]);
+    }
+
     std::string render_state() const override {
         std::string result;
         for (int i = 0; i < 9; ++i) {

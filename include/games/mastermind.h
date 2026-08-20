@@ -84,6 +84,11 @@ public:
 
     int action_count() const override { return guesses_made_; }
 
+    void get_state(float* state) const override {
+        for (int i = 0; i < CODE_LEN; ++i)
+            state[i] = static_cast<float>(current_guess_[i]) / static_cast<float>(NUM_COLORS - 1);
+    }
+
     std::string render_state() const override {
         std::string result;
         for (int i = 0; i < CODE_LEN; ++i) {

@@ -44,7 +44,6 @@ struct NEATGenome {
 
         int matching = 0, disjoint = 0, excess = 0;
         float weight_diff = 0.0f;
-        int max_conn = std::max(connections.size(), other.connections.size());
 
         std::vector<bool> in_a(max_inn + 1, false), in_b(max_inn + 1, false);
         for (auto& c : connections) in_a[c.innovation] = true;

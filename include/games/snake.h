@@ -48,7 +48,7 @@ public:
         static constexpr int dy[] = {-1, 1, 0, 0};
 
         if (action >= 0 && action < 4) {
-            if (std::abs(dx[action] + dx_) != 2 && std::abs(dy[action] + dy_) != 2) {
+            if (dx[action] + dx_ != 0 || dy[action] + dy_ != 0) {
                 dx_ = dx[action];
                 dy_ = dy[action];
             }
