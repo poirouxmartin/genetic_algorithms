@@ -38,15 +38,18 @@ class Game2048 : public GameInterface {
             if (v != 0) vals[cnt++] = v;
         }
         int out = 0;
-        for (int i = 0; i < cnt; ++i) {
+        for (int i = 0; i < cnt; ) {
             if (i + 1 < cnt && vals[i] == vals[i + 1]) {
-                vals[i] *= 2;
-                score_ += vals[i];
+                int merged = vals[i] * 2;
+                score_ += merged;
                 merges_++;
-                if (vals[i] > max_tile_) max_tile_ = vals[i];
+                if (merged > max_tile_) max_tile_ = merged;
+                at(row, out++) = merged;
+                i += 2;
+            } else {
+                at(row, out++) = vals[i];
                 i++;
             }
-            at(row, out++) = vals[i];
         }
         for (int c = out; c < SIZE; ++c) at(row, c) = 0;
     }
@@ -286,6 +289,27 @@ public:
         SDL_SetRenderDrawColor(renderer, 80, 84, 100, 255);
         SDL_Rect border = {ox - 1, oy - 1, bw + 2, bh + 2};
         SDL_RenderDrawRect(renderer, &border);
+
+        int info_y = oy + bh + 10;
+        int info_h = std::max(16, cell / 2);
+        int half_w = bw / 2 - 5;
+
+        SDL_SetRenderDrawColor(renderer, 55, 58, 75, 255);
+        SDL_Rect score_bg = {ox, info_y, half_w, info_h};
+        SDL_RenderFillRect(renderer, &score_bg);
+        SDL_SetRenderDrawColor(renderer, 107, 191, 160, 255);
+        SDL_Rect score_bar = {ox, info_y, half_w * std::min(1.0f, score_ / 50000.0f), info_h};
+        SDL_RenderFillRect(renderer, &score_bar);
+        draw_number(renderer, score_, ox + half_w / 2, info_y + info_h / 2, info_h * 2 / 3, {226, 228, 234, 255});
+
+        SDL_SetRenderDrawColor(renderer, 55, 58, 75, 255);
+        SDL_Rect max_bg = {ox + half_w + 10, info_y, half_w, info_h};
+        SDL_RenderFillRect(renderer, &max_bg);
+        SDL_SetRenderDrawColor(renderer, 212, 184, 122, 255);
+        SDL_Rect max_bar = {ox + half_w + 10, info_y,
+                           static_cast<int>(half_w * std::min(1.0f, std::log2(static_cast<float>(std::max(max_tile_, 1))) / 11.0f)), info_h};
+        SDL_RenderFillRect(renderer, &max_bar);
+        draw_number(renderer, max_tile_, ox + half_w + 10 + half_w / 2, info_y + info_h / 2, info_h * 2 / 3, {226, 228, 234, 255});
     }
 };
 
