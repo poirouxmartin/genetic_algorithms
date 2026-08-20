@@ -216,7 +216,7 @@ ga::GAResult run_game(const GameConfig& gc, bool show_tui) {
 
     ga::GAEngine engine(cfg);
     ga::GpuNN gpu_nn;
-    bool use_gpu = gpu_nn.is_available();
+    bool use_gpu = gpu_nn.is_available() && genome_size > 1000;
 
     std::cout << "Running " << gc.display_name << " (genome=" << genome_size
               << (scoring ? " scoring" : " policy") << ")"
@@ -508,7 +508,7 @@ int main(int argc, char* argv[]) {
             std::vector<ga::Genome> watch_roster;
             int watch_idx = 0;
             ga::GpuNN gpu_nn;
-            bool use_gpu = gpu_nn.is_available();
+            bool use_gpu = gpu_nn.is_available() && genome_size > 1000;
 
             auto eval_fn = [&](ga::Genome& g) {
                 auto tls_game = gc.factory();
