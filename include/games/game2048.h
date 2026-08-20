@@ -139,6 +139,11 @@ public:
 
     bool is_done() const override { return done_; }
 
+    std::vector<int> get_valid_moves() const override {
+        if (done_) return {};
+        return {0, 1, 2, 3};
+    }
+
     float fitness() const override {
         float log_score = 0.0f;
         if (max_tile_ > 0) log_score = std::log2(static_cast<float>(max_tile_));
