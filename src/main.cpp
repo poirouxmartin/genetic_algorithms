@@ -15,6 +15,7 @@
 #include "games/tetris.h"
 #include "games/car_race.h"
 #include "games/trackmania.h"
+#include "games/checkers.h"
 #include "viz/tui.h"
 #include "viz/replay.h"
 #include "viz/gui.h"
