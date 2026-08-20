@@ -21,7 +21,6 @@ class Chess : public GameInterface {
     std::array<int, SZ * SZ> board_{};
     int current_player_ = 1;
     int moves_ = 0;
-    int max_moves_ = 200;
     bool done_ = false;
     bool white_won_ = false;
     bool black_won_ = false;
@@ -358,7 +357,6 @@ public:
                 return;
             }
             if (halfmove_clock_ >= 100) { draw_ = true; done_ = true; }
-            if (moves_ >= max_moves_) { draw_ = true; done_ = true; }
             return;
         }
 
@@ -418,7 +416,6 @@ public:
             return;
         }
         if (halfmove_clock_ >= 100) { draw_ = true; done_ = true; }
-        if (moves_ >= max_moves_) { draw_ = true; done_ = true; }
     }
 
     bool is_done() const override { return done_; }
@@ -582,4 +579,4 @@ private:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Chess, "Chess", 70, 20, 200)
+REGISTER_GAME_DISPLAY(Chess, "Chess", 70, 20, 2000)

@@ -21,7 +21,6 @@ class Checkers : public GameInterface {
     std::array<int, SZ * SZ> board_{};
     int current_player_ = 1;
     int moves_ = 0;
-    int max_moves_ = 200;
     bool done_ = false;
     bool white_won_ = false;
     bool black_won_ = false;
@@ -306,9 +305,7 @@ public:
         if (!has_any_move(current_player_)) {
             if (current_player_ == 1) { black_won_ = true; done_ = true; }
             else { white_won_ = true; done_ = true; }
-            return;
         }
-        if (moves_ >= max_moves_) { draw_ = true; done_ = true; }
     }
 
     bool is_done() const override { return done_; }
@@ -451,4 +448,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Checkers, "Checkers", 67, 16, 200)
+REGISTER_GAME_DISPLAY(Checkers, "Checkers", 67, 16, 2000)

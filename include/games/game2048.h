@@ -21,7 +21,6 @@ class Game2048 : public GameInterface {
 
     std::array<int, TOTAL> board_{};
     int moves_ = 0;
-    int max_moves_ = 200;
     bool done_ = false;
     int max_tile_ = 0;
     int score_ = 0;
@@ -134,9 +133,8 @@ public:
         if (changed) {
             moves_++;
             add_random_tile();
-            if (!has_moves()) done_ = true;
-            if (moves_ >= max_moves_) done_ = true;
         }
+        if (!has_moves()) done_ = true;
     }
 
     bool is_done() const override { return done_; }
@@ -174,7 +172,7 @@ public:
         state[16] = static_cast<float>(empty) / TOTAL;
         state[17] = static_cast<float>(max_r) / (SIZE - 1);
         state[18] = static_cast<float>(max_c) / (SIZE - 1);
-        state[19] = static_cast<float>(moves_) / max_moves_;
+        state[19] = static_cast<float>(moves_) / 1000.0f;
     }
 
     std::string render_state() const override {
@@ -316,4 +314,4 @@ public:
 } // namespace games
 
 #include "ga/game_registry.h"
-REGISTER_GAME_DISPLAY(Game2048, "2048", 20, 16, 200)
+REGISTER_GAME_DISPLAY(Game2048, "2048", 20, 16, 2000)
