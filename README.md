@@ -38,4 +38,4 @@ cmake --build build --config Release
 ## Dependencies
 - C++17 compiler
 - CMake 3.15+
-- SDL2 (bundled in `deps/SDL2-2.30.10/`)
+- SDL2 2.30.10 (bundled in `deps/SDL2-2.30.10/`). To get it, download the Visual C++ development package from https://github.com/libsdl-org/SDL/releases and extract it to `deps/SDL2-2.30.10/`. CMake only enables the GUI when `deps/SDL2-2.30.10/include/SDL.h` exists (it links `lib/x64/SDL2.lib`); otherwise the build is TUI only.
