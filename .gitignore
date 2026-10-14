@@ -2,3 +2,9 @@
 .env
 .env.local
 .env.*.local
+
+build/
+*.obj
+*.pdb
+*.exe
+deps/SDL2.zip

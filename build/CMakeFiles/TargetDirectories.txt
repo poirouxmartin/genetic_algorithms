@@ -1,3 +1,0 @@
-C:/Users/poiro/Projects/genetic_algorithms/build/CMakeFiles/ga_runner.dir
-C:/Users/poiro/Projects/genetic_algorithms/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/poiro/Projects/genetic_algorithms/build/CMakeFiles/ZERO_CHECK.dir
