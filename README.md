@@ -8,13 +8,13 @@ cmake -B build -S .
 cmake --build build --config Release
 
 # Benchmark all games (headless, fast)
-./build/genetic_algorithms.exe bench
+./build/Release/ga_runner.exe bench
 
 # Single game with terminal UI
-./build/genetic_algorithms.exe single Snake
+./build/Release/ga_runner.exe single Snake
 
 # GUI mode with SDL2 visualization
-./build/genetic_algorithms.exe gui Snake
+./build/Release/ga_runner.exe gui Snake
 ```
 
 ## Games
